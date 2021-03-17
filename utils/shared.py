@@ -131,7 +131,7 @@ def generate_token( seed, cat, time, salt, key ):
     assert type(time) is int
     assert (time >= 0) and (time <= 0xffffffff)
     assert type(salt) is bytes
-    assert len(salt) == 32
+    assert (len(salt) >= 24) and (len(salt) <= 64)
     assert type(key) is bytes
     assert (len(key) == 16) or (len(key) == 24) or (len(key) == 32)
 
@@ -151,17 +151,19 @@ def generate_token( seed, cat, time, salt, key ):
     del core, tag, raw_token, cypher
     return token
 
-def decrypt_token( seed, token, salt, key ):
+def decrypt_token( seed, token, key, salt=None ):
     """Decrypt and validate the token. "Validate" means check
        that the provided seed matches the one inside the token, and
-       the pseudo-nonce is as expected.
+       the pseudo-nonce is as expected. The latter check can be
+       disabled by not providing a salt.
 
     PARAMETERS
     ==========
     seed: A bytes object representing the seed.
     token: A bytes object of the token to validate.
-    salt: A bytes object containing this server's salt.
     key: A bytes object containing the encryption key.
+    salt: A bytes object containing this server's salt, or None if it
+       isn't known.
 
     RETURN
     ======
@@ -169,14 +171,14 @@ def decrypt_token( seed, token, salt, key ):
       tuple consisting of (seed, cat, time), where
        seed is a bytes object representing the Minecraft seed,
        cat is an int representing the category the seed was drawn from,
-       and time is the time the seed was drawn, in 1/16th of a second past epoch.
+       and time is the moment the seed was drawn, in 1/16th of a second past epoch.
     """
     assert type(seed) is bytes
     assert len(seed) == 8
     assert type(token) is bytes
     assert (len(token) == 16) or (len(token) == 24) or (len(token) == 32)
-    assert type(salt) is bytes
-    assert len(salt) == 32
+    assert (salt is None) or (type(salt) is bytes)
+    assert (salt is None) or ((len(salt) >= 24) and (len(salt) <= 64))
     assert type(key) is bytes
     assert len(key) == len(token)
 
@@ -190,10 +192,11 @@ def decrypt_token( seed, token, salt, key ):
         return None
 
     # check the pseudo-nonce (the "core" is 13 bytes long)
-    tag = hash_bytes( raw_token[:13], salt )
-    if tag[: len(key) - 13] != raw_token[13:]:
-        del tag
-        return None
-    else:
-        return seed, raw_token[8], \
-                int.from_bytes( raw_token[9:13], 'big' )
+    if salt is not None:
+        tag = hash_bytes( raw_token[:13], salt )
+        if tag[: len(key) - 13] != raw_token[13:]:
+            del tag
+            return None
+
+    return seed, raw_token[8], \
+        int.from_bytes( raw_token[9:13], 'big' )
