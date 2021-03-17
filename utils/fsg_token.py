@@ -1,7 +1,12 @@
+#!/usr/bin/env python3
+
+import argparse
 
 from cryptography.hazmat.backends import default_backend as backend
 from cryptography.hazmat.primitives import hashes, hmac, padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+from datetime import datetime, timedelta, timezone
 
 from secrets import randbits, token_bytes
 
@@ -200,3 +205,62 @@ def decrypt_token( seed, token, key, salt=None ):
 
     return seed, raw_token[8], \
         int.from_bytes( raw_token[9:13], 'big' )
+
+
+def encode_time( moment, epoch=datetime(2021,1,1,tzinfo=timezone(timedelta(0))) ):
+    """Convert the given moment into 1/16th of a second since the epoch.
+
+    PARAMETERS
+    ==========
+    moment: A datetime object to be converted. Must have a timezone associated with it!
+    epoch: The epoch to use. Defaults to 2021/1/1 00:00:00 UTC.
+
+    RETURN
+    ======
+    The appropriate integer.
+    """
+
+    assert type(moment) is datetime
+    assert moment.tzinfo is not None
+    assert type(epoch) is datetime
+    assert epoch.tzinfo is not None
+
+    delta = moment - epoch
+    return int( delta.total_seconds()*16 + .5 )
+
+def decode_time( moment, epoch=datetime(2021,1,1,tzinfo=timezone(timedelta(0))) ):
+    """Convert the encoded time (1/16th of a second since epoch) into 
+       a datetime object.
+
+    PARAMETERS
+    ==========
+    moment: The integer representing a time to convert.
+    epoch: The epoch to use. Defaults to 2021/1/1 00:00:00 UTC.
+
+    RETURN
+    ======
+    A datetime object representing the given integer.
+    """
+
+    assert type(moment) is int
+    assert moment >= 0
+    assert type(epoch) is datetime
+    assert epoch.tzinfo is not None
+
+    return epoch + timedelta( microseconds=moment*62500 )
+
+if __name__ == '__main__':
+
+   cmdline = argparse.ArgumentParser(description='Generate or validate a FSG token. Primarily used for offline verification.')
+
+   cmdline.add_argument( '--seed', metavar='INT', type=int, default=404, help='The seed to generate/validate.' )
+   cmdline.add_argument( '--cat', metavar='INT', type=int, default=1, help='The category that seed falls into.' )
+   cmdline.add_argument( '--time', metavar='INT', type=int, help='The time that seed becomes valid, in 1/16ths of a second since January 1st, 2021. Leave blank to use the current time.' )
+
+   cmdline.add_argument( '--key', metavar='FILE/HEX', help='The secret key associated with this token. Ideally a filename, but a hex-encoded string also works.' )
+   cmdline.add_argument( '--salt', metavar='FILE/HEX/STRING', help='The salt associated with this token. Optional. Ideally a filename, but a hex-encoded string works, with a text string as a fallback.' )
+
+   cmdline.add_argument( '--token', metavar='HEX', help='The token to be validated.' )
+
+   args = cmdline.parse_args()
+
