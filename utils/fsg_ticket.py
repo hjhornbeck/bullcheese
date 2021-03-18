@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+from binascii import unhexlify
 
 from cryptography.hazmat.backends import default_backend as backend
 from cryptography.hazmat.primitives import hashes, hmac, padding
@@ -9,6 +10,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from datetime import datetime, timedelta, timezone
 
 from secrets import randbits, token_bytes
+from sys import exit
 
 def hash_bytes( input, key=None ):
     """Apply SHA2-256. Optionally use HMAC.
@@ -54,7 +56,7 @@ def encrypt_bytes( input, key ):
 
     assert type(input) is bytes
     assert type(key) is bytes
-    assert (len(key) == 16) or (len(key) == 24) or (len(key) == 32)
+    assert len(key) in [16, 24, 32]
 
     iv = token_bytes( len(key) )
     tag = hash_bytes( input )
@@ -85,7 +87,7 @@ def decrypt_bytes( input, key ):
 
     assert type(input) is bytes
     assert type(key) is bytes
-    assert (len(key) == 16) or (len(key) == 24) or (len(key) == 32)
+    assert len(key) in [16, 24, 32]
 
     if (len(input) % len(key)) != 0:    # only certain sizes are valid
         return None
@@ -112,8 +114,8 @@ def decrypt_bytes( input, key ):
         del tag
         return tagged[:-32]
 
-def generate_token( seed, cat, time, salt, key ):
-    """Generate the token used to validate a run.
+def generate_ticket( seed, cat, time, salt, key ):
+    """Generate the ticket used to validate a run.
 
     PARAMETERS
     ==========
@@ -138,41 +140,41 @@ def generate_token( seed, cat, time, salt, key ):
     assert type(salt) is bytes
     assert (len(salt) >= 24) and (len(salt) <= 64)
     assert type(key) is bytes
-    assert (len(key) == 16) or (len(key) == 24) or (len(key) == 32)
+    assert len(key) in [16, 24, 32]
 
-    # create the token's core
+    # create the ticket's core
     core = seed + cat.to_bytes( 1, 'big' ) + time.to_bytes( 4, 'big' )
 
     # create the associated tag
     tag = hash_bytes( core, salt )
 
     # combine them into the appropriate length
-    raw_token = core + tag[: len(key) - len(core)]
+    raw_ticket = core + tag[: len(key) - len(core)]
 
     # finally, encrypt and return
     cypher = Cipher(algorithms.AES(key), mode=modes.ECB(), backend=backend()).encryptor()
-    token = cypher.update( raw_token ) + cypher.finalize()
+    ticket = cypher.update( raw_ticket ) + cypher.finalize()
 
-    del core, tag, raw_token, cypher
-    return token
+    del core, tag, raw_ticket, cypher
+    return ticket
 
-def decrypt_token( seed, token, key, salt=None ):
-    """Decrypt and validate the token. "Validate" means check
-       that the provided seed matches the one inside the token, and
+def decrypt_ticket( seed, ticket, key, salt=None ):
+    """Decrypt and validate the ticket. "Validate" means check
+       that the provided seed matches the one inside the ticket, and
        the pseudo-nonce is as expected. The latter check can be
        disabled by not providing a salt.
 
     PARAMETERS
     ==========
     seed: A bytes object representing the seed.
-    token: A bytes object of the token to validate.
+    ticket: A bytes object of the ticket to validate.
     key: A bytes object containing the encryption key.
     salt: A bytes object containing this server's salt, or None if it
        isn't known.
 
     RETURN
     ======
-    If the token is invalid, returns None. If it is valid, returns a 
+    If the ticket is invalid, returns None. If it is valid, returns a 
       tuple consisting of (seed, cat, time), where
        seed is a bytes object representing the Minecraft seed,
        cat is an int representing the category the seed was drawn from,
@@ -180,31 +182,31 @@ def decrypt_token( seed, token, key, salt=None ):
     """
     assert type(seed) is bytes
     assert len(seed) == 8
-    assert type(token) is bytes
-    assert (len(token) == 16) or (len(token) == 24) or (len(token) == 32)
+    assert type(ticket) is bytes
+    assert len(ticket) in [16, 24, 32]
     assert (salt is None) or (type(salt) is bytes)
     assert (salt is None) or ((len(salt) >= 24) and (len(salt) <= 64))
     assert type(key) is bytes
-    assert len(key) == len(token)
+    assert len(key) == len(ticket)
 
-    # decrypt the token
+    # decrypt the ticket
     cypher = Cipher(algorithms.AES(key), mode=modes.ECB(), backend=backend()).decryptor()
-    raw_token = cypher.update( token ) + cypher.finalize()
+    raw_ticket = cypher.update( ticket ) + cypher.finalize()
     del cypher
 
     # check that the seeds match
-    if raw_token[:8] != seed:
+    if raw_ticket[:8] != seed:
         return None
 
     # check the pseudo-nonce (the "core" is 13 bytes long)
     if salt is not None:
-        tag = hash_bytes( raw_token[:13], salt )
-        if tag[: len(key) - 13] != raw_token[13:]:
+        tag = hash_bytes( raw_ticket[:13], salt )
+        if tag[: len(key) - 13] != raw_ticket[13:]:
             del tag
             return None
 
-    return seed, raw_token[8], \
-        int.from_bytes( raw_token[9:13], 'big' )
+    return seed, raw_ticket[8], \
+        int.from_bytes( raw_ticket[9:13], 'big' )
 
 
 def encode_time( moment, epoch=datetime(2021,1,1,tzinfo=timezone(timedelta(0))) ):
@@ -251,16 +253,153 @@ def decode_time( moment, epoch=datetime(2021,1,1,tzinfo=timezone(timedelta(0))) 
 
 if __name__ == '__main__':
 
-   cmdline = argparse.ArgumentParser(description='Generate or validate a FSG token. Primarily used for offline verification.')
+   cmdline = argparse.ArgumentParser(description='Generate or validate a FSG ticket. Primarily used for offline verification.')
 
    cmdline.add_argument( '--seed', metavar='INT', type=int, default=404, help='The seed to generate/validate.' )
-   cmdline.add_argument( '--cat', metavar='INT', type=int, default=1, help='The category that seed falls into.' )
+   cmdline.add_argument( '--cat', metavar='INT', type=int, help='The category that seed falls into.' )
    cmdline.add_argument( '--time', metavar='INT', type=int, help='The time that seed becomes valid, in 1/16ths of a second since January 1st, 2021. Leave blank to use the current time.' )
 
-   cmdline.add_argument( '--key', metavar='FILE/HEX', help='The secret key associated with this token. Ideally a filename, but a hex-encoded string also works.' )
-   cmdline.add_argument( '--salt', metavar='FILE/HEX/STRING', help='The salt associated with this token. Optional. Ideally a filename, but a hex-encoded string works, with a text string as a fallback.' )
+   cmdline.add_argument( '--key', metavar='FILE/HEX', required=True, help='The secret key associated with this ticket. Ideally a filename, but a hex-encoded string also works.' )
+   cmdline.add_argument( '--salt', metavar='FILE/HEX/STRING', help='The salt associated with this ticket. Optional. Ideally a filename, but a hex-encoded string works, with a text string as a fallback.' )
 
-   cmdline.add_argument( '--token', metavar='HEX', help='The token to be validated.' )
+   cmdline.add_argument( '--ticket', metavar='HEX', help='The ticket to be validated.' )
 
    args = cmdline.parse_args()
 
+    
+   # try to load that key, first as a file
+   binary = None
+   try:
+       with open( args.key, 'rb' ) as f:
+       binary = f.read()
+   except:
+       pass
+        
+   # did we read something?
+   if binary is not None:
+
+    # use the length to tell if its hex-encoded ...
+    if len(binary) in [48, 64]:
+        try:
+            args.key = unhexlify( binary.decode('utf-8') )
+        except:
+            binary = None
+
+    # ... or it is binary ...
+    elif len(binary) in [16, 24]:
+        args.key = binary
+
+    # ... otherwise, decide based on if it decodes
+    elif len(binary) == 32:
+        try:
+            binary = unhexlify( binary.decode('utf-8') )
+        except:
+            pass
+
+        args.key = binary
+
+   # if none of the above works, the key might be a hex string
+   if (type(args.key) is str) and (len(args.key) in [32, 48, 64]):
+        try:
+            args.key = unhexlify( string )
+        except:
+            pass
+
+   # still no key? give up
+   if (type(args.key) is not bytes) or (len(args.key) not in [16,24,32]):
+       print("ERROR: An invalid key was given! It must be a file or hex string.")
+       exit( 1 )
+
+   # the salt's turn, if it was provided
+   if args.salt is not None:
+        binary = None
+        try:
+            with open( args.salt, 'rb' ) as f:
+                binary = f.read()
+        except:
+            pass
+        
+        if binary is not None:
+
+            # check if the length reveals it was hex encoded ...
+            if (len(binary) > 64) and (len(binary) <= 128):
+                try:
+                    args.salt = unhexlify( binary.decode('utf-8') )
+                except:
+                    binary = None
+                    
+            # ... or it is raw bytes ...
+            elif (len(binary) >= 24) and (len(binary) < 48):
+                    args.salt = binary
+
+            # ... or on whether or not it decodes
+            elif (len(binary) >= 48) and (len(binary) <= 64):
+                try:
+                    binary = unhexlify( binary.decode('utf-8') )
+                except:
+                    pass
+
+                args.salt = binary
+                    
+        # if none of the above works, the salt might be a hex string
+        if (type(args.salt) is str) and \
+                (len(args.salt) >= 48) and (len(args.salt) <= 128):
+            try:
+                args.salt = unhexlify( args.salt )
+            except:
+                pass
+
+        # still nothing? Maybe it's a string
+        if (type(args.salt) is str) and \
+                (len(args.salt) >= 24) and (len(args.salt) <= 64):
+            try:
+                args.salt = args.salt.encode('utf-8')
+            except:
+                pass
+
+        # if we haven't succeeded by now, there must have been an error
+        if (type(args.salt) is not bytes) or \
+                (len(args.salt) < 24) or (len(args.salt) > 64):
+            print("ERROR: An invalid salt was given! It must be a file or string.")
+            exit( 2 )
+
+   # ensure the seed is the appropriate size
+   if (args.seed >= (1 << 63)) or (args.seed < -(1 << 63)):
+        print("ERROR: An invalid seed was given! It should be smaller.")
+        exit( 3 )
+
+   # convert the seed to unsigned bytes
+   args.seed &= ((1 << 64) - 1)
+   args.seed = args.seed.to_bytes( 8, 'big' )
+
+   # fill in a time, if necessary
+   if args.time is None:
+       args.time = encode_time( datetime.now() )
+
+   # ticket given? Validate it
+   if args.ticket is not None:
+
+       # first off, convert to bytes
+       try:
+            args.ticket = unhexlify( args.ticket )
+       except:
+            print("ERROR: An invalid ticket was given! It must be a hex string.")
+            exit( 4 )
+
+       # are we the proper size?
+       if len(args.ticket) != len(args.key):
+            print("ERROR: An invalid ticket was given! It must be the same size as the key.")
+            exit( 5 )
+
+       result = decrypt_ticket( args.seed, args.ticket, args.key, args.salt )
+
+       # if it doesn't decrypt, we know we've got issues
+       if result is None:
+            print(f"The ticket '{args.ticket.hex()}' is invalid!")
+            exit( 127 )
+
+       # were we also given a category and time? Check them too
+
+
+
+   # otherwise, create it
