@@ -27,7 +27,7 @@ def hash_bytes( input, key=None ):
     """
     assert type(input) is bytes
     assert (key is None) or type(key) is bytes
-    assert (key is None) or (len(key) == 32)
+    assert (key is None) or ((len(key) >= 24) and (len(key) <= 64))
 
     if key is None:
         tagger = hashes.Hash( hashes.SHA256(), backend=backend() )
@@ -114,17 +114,20 @@ def decrypt_bytes( input, key ):
         del tag
         return tagged[:-32]
 
-def generate_ticket( seed, cat, time, salt, key ):
+def generate_ticket( seed, cat, time, salt, key, blocks=2 ):
     """Generate the ticket used to validate a run.
 
     PARAMETERS
     ==========
     seed: A bytes object representing the seed.
     cat: An int representing the category the seed was drawn from.
-    time: The time the seed was drawn, in 1/16ths of a 
+    time: The time the seed was drawn, in 1/8ths of a 
        second past epoch.
     salt: A bytes object containing this server's salt.
     key: A bytes object containing the encryption key.
+    blocks: How long the ticket is, in blocks of 16 bytes.
+      Shorter tickets are easier to work with but also easier to
+      forge. Only 1 and 2 are valid.
 
     RETURN
     ======
@@ -141,6 +144,7 @@ def generate_ticket( seed, cat, time, salt, key ):
     assert (len(salt) >= 24) and (len(salt) <= 64)
     assert type(key) is bytes
     assert len(key) in [16, 24, 32]
+    assert blocks in [1,2]
 
     # create the ticket's core
     core = seed + cat.to_bytes( 1, 'big' ) + time.to_bytes( 4, 'big' )
@@ -149,7 +153,7 @@ def generate_ticket( seed, cat, time, salt, key ):
     tag = hash_bytes( core, salt )
 
     # combine them into the appropriate length
-    raw_ticket = core + tag[: len(key) - len(core)]
+    raw_ticket = core + tag[: blocks*16 - len(core) ]
 
     # finally, encrypt and return
     cypher = Cipher(algorithms.AES(key), mode=modes.ECB(), backend=backend()).encryptor()
@@ -178,16 +182,16 @@ def decrypt_ticket( seed, ticket, key, salt=None ):
       tuple consisting of (seed, cat, time), where
        seed is a bytes object representing the Minecraft seed,
        cat is an int representing the category the seed was drawn from,
-       and time is the moment the seed was drawn, in 1/16th of a second past epoch.
+       and time is the moment the seed was drawn, in 1/8th of a second past epoch.
     """
     assert type(seed) is bytes
     assert len(seed) == 8
     assert type(ticket) is bytes
-    assert len(ticket) in [16, 24, 32]
+    assert len(ticket) in [16, 32]
     assert (salt is None) or (type(salt) is bytes)
     assert (salt is None) or ((len(salt) >= 24) and (len(salt) <= 64))
     assert type(key) is bytes
-    assert len(key) == len(ticket)
+    assert len(key) in [16, 24, 32]
 
     # decrypt the ticket
     cypher = Cipher(algorithms.AES(key), mode=modes.ECB(), backend=backend()).decryptor()
@@ -201,16 +205,46 @@ def decrypt_ticket( seed, ticket, key, salt=None ):
     # check the pseudo-nonce (the "core" is 13 bytes long)
     if salt is not None:
         tag = hash_bytes( raw_ticket[:13], salt )
-        if tag[: len(key) - 13] != raw_ticket[13:]:
+        if tag[: len(ticket) - 13] != raw_ticket[13:]:
             del tag
             return None
 
     return seed, raw_ticket[8], \
         int.from_bytes( raw_ticket[9:13], 'big' )
 
+def pretty_ticket( ticket ):
+    """Make the ticket look more appealing to human eyes.
+
+    PARAMETERS
+    ==========
+    ticket: A bytes object representing the ticket.
+
+    RETURN
+    ======
+    A string.
+    """
+
+    return (''.join( [f"{ticket[i*8:(i+1)*8].hex()}-" for i in range( len(ticket)>>3 )] ))[:-1]
+
+def clean_ticket( ticket ):
+    """Make the ticket look more appealing to a computer.
+
+    PARAMETERS
+    ==========
+    ticket: A string representing the ticket.
+
+    RETURN
+    ======
+    A bytes object representing the ticket, or None if the input could not be converted.
+    """
+
+    try:
+        return unhexlify( ticket.replace("-","") )
+    except:
+        return None
 
 def encode_time( moment, epoch=datetime(2021,1,1,tzinfo=timezone(timedelta(0))) ):
-    """Convert the given moment into 1/16th of a second since the epoch.
+    """Convert the given moment into 1/8th of a second since the epoch.
 
     PARAMETERS
     ==========
@@ -228,10 +262,10 @@ def encode_time( moment, epoch=datetime(2021,1,1,tzinfo=timezone(timedelta(0))) 
     assert epoch.tzinfo is not None
 
     delta = moment - epoch
-    return int( delta.total_seconds()*16 + .5 )
+    return int( delta.total_seconds()*8 + .5 )
 
 def decode_time( moment, epoch=datetime(2021,1,1,tzinfo=timezone(timedelta(0))) ):
-    """Convert the encoded time (1/16th of a second since epoch) into 
+    """Convert the encoded time (1/8th of a second since epoch) into 
        a datetime object.
 
     PARAMETERS
@@ -249,7 +283,7 @@ def decode_time( moment, epoch=datetime(2021,1,1,tzinfo=timezone(timedelta(0))) 
     assert type(epoch) is datetime
     assert epoch.tzinfo is not None
 
-    return epoch + timedelta( microseconds=moment*62500 )
+    return epoch + timedelta( milliseconds=moment*125 )
 
 if __name__ == '__main__':
 
@@ -257,12 +291,16 @@ if __name__ == '__main__':
 
    cmdline.add_argument( '--seed', metavar='INT', type=int, default=404, help='The seed to generate/validate.' )
    cmdline.add_argument( '--cat', metavar='INT', type=int, help='The category that seed falls into.' )
-   cmdline.add_argument( '--time', metavar='INT', type=int, help='The time that seed becomes valid, in 1/16ths of a second since January 1st, 2021. Leave blank to use the current time.' )
+   cmdline.add_argument( '--time', metavar='INT', type=int, help='The time that seed becomes valid, in 1/8ths of a second since January 1st, 2021. Leave blank to use the current time.' )
 
    cmdline.add_argument( '--key', metavar='FILE/HEX', required=True, help='The secret key associated with this ticket. Ideally a filename, but a hex-encoded string also works.' )
-   cmdline.add_argument( '--salt', metavar='FILE/HEX/STRING', help='The salt associated with this ticket. Optional. Ideally a filename, but a hex-encoded string works, with a text string as a fallback.' )
+   cmdline.add_argument( '--salt', metavar='FILE/HEX/STRING', help='The salt associated with this ticket. Optional for validation. Ideally a filename, but a hex-encoded string works, with a text string as a fallback.' )
+
+   cmdline.add_argument( '--live_time', metavar='INT', type=int, default=7200, help='The number of seconds a ticket remains "live" after creation.' )
+   cmdline.add_argument( '--dead_time', metavar='INT', type=int, default=14*86400, help='The number of seconds until a ticket transitions from "dead" to "invalid/expired".' )
 
    cmdline.add_argument( '--ticket', metavar='HEX', help='The ticket to be validated.' )
+   cmdline.add_argument( '--blocks', metavar='SIZE', type=int, choices=[1,2], default=2, help='The number of blocks in the ticket. Only used for generation.' )
 
    args = cmdline.parse_args()
 
@@ -271,7 +309,7 @@ if __name__ == '__main__':
    binary = None
    try:
        with open( args.key, 'rb' ) as f:
-       binary = f.read()
+           binary = f.read()
    except:
        pass
         
@@ -301,13 +339,13 @@ if __name__ == '__main__':
    # if none of the above works, the key might be a hex string
    if (type(args.key) is str) and (len(args.key) in [32, 48, 64]):
         try:
-            args.key = unhexlify( string )
+            args.key = unhexlify( args.key )
         except:
             pass
 
    # still no key? give up
-   if (type(args.key) is not bytes) or (len(args.key) not in [16,24,32]):
-       print("ERROR: An invalid key was given! It must be a file or hex string.")
+   if (type(args.key) is not bytes) or (len(args.key) not in [16, 24, 32]):
+       print("ERROR: An invalid key was given! It must be a file or hex string, and either 16, 24, or 32 bytes long.")
        exit( 1 )
 
    # the salt's turn, if it was provided
@@ -360,7 +398,7 @@ if __name__ == '__main__':
         # if we haven't succeeded by now, there must have been an error
         if (type(args.salt) is not bytes) or \
                 (len(args.salt) < 24) or (len(args.salt) > 64):
-            print("ERROR: An invalid salt was given! It must be a file or string.")
+            print("ERROR: An invalid salt was given! It must be a file or string, between 24 and 64 bytes in size.")
             exit( 2 )
 
    # ensure the seed is the appropriate size
@@ -374,32 +412,69 @@ if __name__ == '__main__':
 
    # fill in a time, if necessary
    if args.time is None:
-       args.time = encode_time( datetime.now() )
+       args.time = encode_time( datetime.now(timezone.utc) )
 
    # ticket given? Validate it
    if args.ticket is not None:
 
        # first off, convert to bytes
        try:
-            args.ticket = unhexlify( args.ticket )
+            args.ticket = unhexlify( args.ticket.replace("-","") )
        except:
             print("ERROR: An invalid ticket was given! It must be a hex string.")
             exit( 4 )
 
        # are we the proper size?
-       if len(args.ticket) != len(args.key):
-            print("ERROR: An invalid ticket was given! It must be the same size as the key.")
+       if not (len(args.ticket) in [16,32]):
+            print("ERROR: An invalid ticket was given! It must be either 16 or 32 bytes in size.")
             exit( 5 )
 
        result = decrypt_ticket( args.seed, args.ticket, args.key, args.salt )
 
        # if it doesn't decrypt, we know we've got issues
        if result is None:
-            print(f"The ticket '{args.ticket.hex()}' is invalid!")
+            print(f"The ticket '{args.ticket.hex()}' is invalid/expired!")
             exit( 127 )
 
        # were we also given a category and time? Check them too
+       seed, cat, time = result
+       if (args.cat is not None) and (args.cat != cat):
+            print(f"The ticket '{args.ticket.hex()}' is invalid/expired!")
+            exit( 127 )
 
+       now = datetime.now(timezone.utc)          # must have timezone info
+       creation = decode_time(time).astimezone() # decode and convert to local time
 
+       seconds = int( (now - creation).total_seconds() + .5 )
 
+       if seconds > args.dead_time:
+            print(f"The ticket '{args.ticket.hex()}' is invalid/expired!")
+            exit( 127 )
+
+       if seconds > args.live_time:
+            print(f"The ticket '{args.ticket.hex()}' is dead; if it was not submitted for verification while it was live, it is invalid.")
+            print(f"    TIME: {creation.strftime('%Y/%m/%d %H:%M %Z')}")
+       else:
+            print(f"The ticket '{args.ticket.hex()}' is live, and could be a viable record if submitted for validation.")
+            remaining = args.live_time - seconds
+            print(f" EXPIRES: In {remaining // 3600} hours, {(remaining // 60)%60} minutes, and {remaining % 60} seconds.")
+
+       print(f"    SEED: {int.from_bytes( seed, 'big' )}")     # TODO: convert from unsigned to signed!
+       print(f"     CAT: {cat}")
+       if args.salt is None:
+           print(" WARNING: No value for the salt was provided, so this could be a forged ticket.")
+
+       exit( 0 )    # no need to indent the next section
+   
    # otherwise, create it
+   if args.salt is None:
+        print("ERROR: A salt is necessary for generating a ticket!")
+        exit( 6 )
+
+   if args.cat is None:
+        print("ERROR: A category is necessary for generating a ticket!")
+        exit( 7 )
+
+   ticket = pretty_ticket( generate_ticket( args.seed, args.cat, args.time, args.salt, args.key, args.blocks ) )
+   print(f"Here is a ticket for seed {int.from_bytes( args.seed, 'big' )}: {ticket}")
+
