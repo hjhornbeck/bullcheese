@@ -248,8 +248,8 @@ def clean_ticket( ticket, version=1 ):
 
     assert version == 1
 
-    for idx in [16,33,50]:
-        if idx < len(ticket) and ticket[idx] != "-":
+    for i,c in enumerate(ticket):
+        if (i in [16,33,50]) != (c == '-'):
             return b''
 
     try:
