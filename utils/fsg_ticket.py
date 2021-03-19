@@ -212,36 +212,50 @@ def decrypt_ticket( seed, ticket, key, salt=None ):
     return seed, raw_ticket[8], \
         int.from_bytes( raw_ticket[9:13], 'big' )
 
-def pretty_ticket( ticket ):
+def pretty_ticket( ticket, version=1 ):
     """Make the ticket look more appealing to human eyes.
 
     PARAMETERS
     ==========
     ticket: A bytes object representing the ticket.
+    version: The version of formatting to use. Currently
+       there's only 1.
 
     RETURN
     ======
     A string.
     """
 
+    assert version == 1
+
     return (''.join( [f"{ticket[i*8:(i+1)*8].hex()}-" for i in range( len(ticket)>>3 )] ))[:-1]
 
-def clean_ticket( ticket ):
+def clean_ticket( ticket, version=1 ):
     """Make the ticket look more appealing to a computer.
 
     PARAMETERS
     ==========
     ticket: A string representing the ticket.
+    version: The version of formatting to use. Currently
+       there's only 1.
+    
 
     RETURN
     ======
-    A bytes object representing the ticket, or None if the input could not be converted.
+    A bytes object representing the ticket. If the input is invalid
+      for the given format, a blank bytes object is returned.
     """
+
+    assert version == 1
+
+    for idx in [16,33,50]:
+        if idx < len(ticket) and ticket[idx] != "-":
+            return b''
 
     try:
         return unhexlify( ticket.replace("-","") )
     except:
-        return None
+        return b''
 
 def encode_time( moment, epoch=datetime(2021,1,1,tzinfo=timezone(timedelta(0))) ):
     """Convert the given moment into 1/8th of a second since the epoch.
@@ -419,7 +433,7 @@ if __name__ == '__main__':
 
        # first off, convert to bytes
        try:
-            args.ticket = unhexlify( args.ticket.replace("-","") )
+            args.ticket = clean_ticket( args.ticket )
        except:
             print("ERROR: An invalid ticket was given! It must be a hex string.")
             exit( 4 )
@@ -433,13 +447,13 @@ if __name__ == '__main__':
 
        # if it doesn't decrypt, we know we've got issues
        if result is None:
-            print(f"The ticket '{args.ticket.hex()}' is invalid/expired!")
+            print(f"The ticket '{pretty_ticket( args.ticket )}' is invalid/expired!")
             exit( 127 )
 
        # were we also given a category and time? Check them too
        seed, cat, time = result
        if (args.cat is not None) and (args.cat != cat):
-            print(f"The ticket '{args.ticket.hex()}' is invalid/expired!")
+            print(f"The ticket '{pretty_ticket( args.ticket )}' is invalid/expired!")
             exit( 127 )
 
        now = datetime.now(timezone.utc)          # must have timezone info
@@ -448,14 +462,14 @@ if __name__ == '__main__':
        seconds = int( (now - creation).total_seconds() + .5 )
 
        if seconds > args.dead_time:
-            print(f"The ticket '{args.ticket.hex()}' is invalid/expired!")
+            print(f"The ticket '{pretty_ticket( args.ticket )}' is invalid/expired!")
             exit( 127 )
 
        if seconds > args.live_time:
-            print(f"The ticket '{args.ticket.hex()}' is dead; if it was not submitted for verification while it was live, it is invalid.")
+            print(f"The ticket '{pretty_ticket( args.ticket )}' is dead; if it was not submitted for verification while it was live, it is invalid.")
             print(f"    TIME: {creation.strftime('%Y/%m/%d %H:%M %Z')}")
        else:
-            print(f"The ticket '{args.ticket.hex()}' is live, and could be a viable record if submitted for validation.")
+            print(f"The ticket '{pretty_ticket( args.ticket )}' is live, and could be a viable record if submitted for validation.")
             remaining = args.live_time - seconds
             print(f" EXPIRES: In {remaining // 3600} hours, {(remaining // 60)%60} minutes, and {remaining % 60} seconds.")
 
