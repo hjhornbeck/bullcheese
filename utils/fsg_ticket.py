@@ -299,6 +299,25 @@ def decode_time( moment, epoch=datetime(2021,1,1,tzinfo=timezone(timedelta(0))) 
 
     return epoch + timedelta( milliseconds=moment*125 )
 
+def unsigned_to_signed( integer, bits=64 ):
+    """A quick helper to do what the tin says.
+
+    PARAMETERS
+    ==========
+    integer: The integer to convert.
+    bits: How many bits this number requires. Defaults to 8 bytes.
+
+    RETURN
+    ======
+    A signed integer.
+    """
+
+    if integer < (1 << (bits-1)):
+        return integer
+    else:
+        return integer - (1 << bits)
+    
+
 if __name__ == '__main__':
 
    cmdline = argparse.ArgumentParser(description='Generate or validate a FSG ticket. Primarily used for offline verification.')
@@ -447,13 +466,15 @@ if __name__ == '__main__':
 
        # if it doesn't decrypt, we know we've got issues
        if result is None:
-            print(f"The ticket '{pretty_ticket( args.ticket )}' is invalid/expired!")
+            print(f"The ticket is invalid/expired!")
+            print(f"  TICKET: {pretty_ticket( args.ticket )}")
             exit( 127 )
 
        # were we also given a category and time? Check them too
        seed, cat, time = result
        if (args.cat is not None) and (args.cat != cat):
-            print(f"The ticket '{pretty_ticket( args.ticket )}' is invalid/expired!")
+            print(f"The ticket is invalid/expired!")
+            print(f"  TICKET: {pretty_ticket( args.ticket )}")
             exit( 127 )
 
        now = datetime.now(timezone.utc)          # must have timezone info
@@ -462,18 +483,20 @@ if __name__ == '__main__':
        seconds = int( (now - creation).total_seconds() + .5 )
 
        if seconds > args.dead_time:
-            print(f"The ticket '{pretty_ticket( args.ticket )}' is invalid/expired!")
+            print(f"The ticket is invalid/expired!")
+            print(f"  TICKET: {pretty_ticket( args.ticket )}")
             exit( 127 )
 
        if seconds > args.live_time:
-            print(f"The ticket '{pretty_ticket( args.ticket )}' is dead; if it was not submitted for verification while it was live, it is invalid.")
+            print(f"The ticket is DEAD; if it was not submitted for verification while it was live, it is invalid.")
             print(f"    TIME: {creation.strftime('%Y/%m/%d %H:%M %Z')}")
        else:
-            print(f"The ticket '{pretty_ticket( args.ticket )}' is live, and could be a viable record if submitted for validation.")
+            print(f"The ticket is LIVE, and could be a viable record if submitted for validation.")
             remaining = args.live_time - seconds
             print(f" EXPIRES: In {remaining // 3600} hours, {(remaining // 60)%60} minutes, and {remaining % 60} seconds.")
 
-       print(f"    SEED: {int.from_bytes( seed, 'big' )}")     # TODO: convert from unsigned to signed!
+       print(f"  TICKET: {pretty_ticket( args.ticket )}")
+       print(f"    SEED: {unsigned_to_signed(int.from_bytes( seed, 'big' ))}")
        print(f"     CAT: {cat}")
        if args.salt is None:
            print(" WARNING: No value for the salt was provided, so this could be a forged ticket.")
@@ -490,5 +513,6 @@ if __name__ == '__main__':
         exit( 7 )
 
    ticket = pretty_ticket( generate_ticket( args.seed, args.cat, args.time, args.salt, args.key, args.blocks ) )
-   print(f"Here is a ticket for seed {int.from_bytes( args.seed, 'big' )}: {ticket}")
+   print(f"Here is a ticket for seed {unsigned_to_signed(int.from_bytes( args.seed, 'big' ))}:")
+   print(f" TICKET: {ticket}")
 
