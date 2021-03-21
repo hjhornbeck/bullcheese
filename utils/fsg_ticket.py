@@ -459,21 +459,21 @@ if __name__ == '__main__':
 
        # are we the proper size?
        if not (len(args.ticket) in [16,32]):
-            print("ERROR: An invalid ticket was given! It must be either 16 or 32 bytes in size.")
+            print("ERROR: An invalid ticket was given! It must be either 16 or 32 bytes in size, and with the proper hyphenation.")
             exit( 5 )
 
        result = decrypt_ticket( args.seed, args.ticket, args.key, args.salt )
 
        # if it doesn't decrypt, we know we've got issues
        if result is None:
-            print(f"The ticket is invalid/expired!")
+            print(f"The ticket is INVALID/EXPIRED!")
             print(f"  TICKET: {pretty_ticket( args.ticket )}")
             exit( 127 )
 
        # were we also given a category and time? Check them too
        seed, cat, time = result
        if (args.cat is not None) and (args.cat != cat):
-            print(f"The ticket is invalid/expired!")
+            print(f"The ticket is INVALID/EXPIRED!")
             print(f"  TICKET: {pretty_ticket( args.ticket )}")
             exit( 127 )
 
@@ -483,7 +483,7 @@ if __name__ == '__main__':
        seconds = int( (now - creation).total_seconds() + .5 )
 
        if seconds > args.dead_time:
-            print(f"The ticket is invalid/expired!")
+            print(f"The ticket is INVALID/EXPIRED!")
             print(f"  TICKET: {pretty_ticket( args.ticket )}")
             exit( 127 )
 
