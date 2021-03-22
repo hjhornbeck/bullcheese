@@ -179,6 +179,8 @@ if __name__ == '__main__':
    args = cmdline.parse_args()
 
    # handle the packed input first
+   seeds = list()
+
    unpacked = None
    if args.input:
         unpacked = load_seeds( args.input.name )      # cheat and rely on argparse for file detection
@@ -186,8 +188,10 @@ if __name__ == '__main__':
             print( f"ERROR: Could not read the input seed file '{args.input.name}'. Double-check it exists and has the right format." )
             exit( 1 )
 
+        elif (type(unpacked) is tuple) and (len(unpacked) == 3):
+            seeds = unpacked[2]
+
    # next, the TSVs
-   seeds = list()
    if args.seeds:
         
         # no URL? try poaching it from the packed seed file
@@ -207,13 +211,30 @@ if __name__ == '__main__':
             print( f"ERROR: When writing to a file, a name is mandatory. Please supply one on the command line." )
             exit( 3 )
             
-        # now start reading in the TSVs
-        seeds = read_TSVs( args.seeds )
+        # now append these seeds to the ones above
+        seeds.extend( read_TSVs(args.seeds, sort=False) )     # we sort when we call pack_seeds()
 
     # finally, are we writing to a file or printing?
     if args.output:
 
-        # merge the read file + TSVs, as applicable, and write them out
-    else:
+        # generate the raw values, then compress them if asked
+        raw = pack_seeds( args.url, args.name, seeds )
+        if args.output.name[-3:] == ".gz":
+            args.output.write( gzip.compress(raw) )
+        else:
+            args.output.write( raw )
 
-        # otherwise, do a mass print of all the seeds (with embedded URL and name info, if provided)
+    else:
+        
+        # mass-print out every seed
+        print(f"# URL: {args.url}")
+        print(f"# NAME: {args.name}")
+
+        seeds.sort()        # hasn't been sorted yet
+        for seed in seeds:
+
+            value = int.from_bytes( seed, 'big' )
+            if value >= (1 << 63):
+                value -= (1 << 64)
+
+            print(value)
