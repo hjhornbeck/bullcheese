@@ -121,7 +121,7 @@ def read_TSVs( files, sort=True ):
 
             # convert to unsigned and pack
             seed &= ((1 << 64) - 1)
-            seeds.append( seed.to_bytes( 8, 'big' )
+            seeds.append( seed.to_bytes(8, 'big') )
 
     if sort:
         seeds.sort()
@@ -189,7 +189,9 @@ if __name__ == '__main__':
             exit( 1 )
 
         elif (type(unpacked) is tuple) and (len(unpacked) == 3):
-            seeds = unpacked[2]
+            seeds = [unpacked[2][ i : i+8 ] for i in range(0, len(unpacked[2]), 8)]
+            if len(seeds[-1]) < 8:		# ensure the last seed is the proper size
+               del seeds[-1]
 
    # next, the TSVs
    if args.seeds:
@@ -214,8 +216,8 @@ if __name__ == '__main__':
         # now append these seeds to the ones above
         seeds.extend( read_TSVs(args.seeds, sort=False) )     # we sort when we call pack_seeds()
 
-    # finally, are we writing to a file or printing?
-    if args.output:
+   # finally, are we writing to a file or printing?
+   if args.output:
 
         # generate the raw values, then compress them if asked
         raw = pack_seeds( args.url, args.name, seeds )
@@ -224,7 +226,7 @@ if __name__ == '__main__':
         else:
             args.output.write( raw )
 
-    else:
+   else:
         
         # mass-print out every seed
         print(f"# URL: {args.url}")
