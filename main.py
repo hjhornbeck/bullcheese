@@ -33,10 +33,6 @@ TMP_DIR = "/tmp"
 
 # beyond this point, you shouldn't have to edit any variables manually
 
-assert BLOCKS in [1,2]
-
-TICK = 0.125
-INVTICK = 8
 
 ##### IMPORTS
 
@@ -144,7 +140,7 @@ class Category:
         global BLOCKS, PRIVATE_KEY
 
         last = encode_time( datetime.now(timezone.utc) )
-        now  = datetime.now(timezone.utc)
+        now  = None     # probably unnecessary
 
                     # acquire lock
         with self.gen_lock:
@@ -184,16 +180,42 @@ class Category:
 
         return self.seeds[ offset:offset+8 ], now, ticket
 
-    def verify_pause(self):
+    def verify_throttle(self):
         """Handle the pause associated with verification. Allows external
            code to throttle when its known verification failed.
         """
+        global VERIFY_INT
 
-        # acquire lock
-        # read last access time
-        # too quick? sleep
-        # write current time
-        # release lock
+                    # acquire lock
+        with self.ver_lock:
+
+                    # read the last access time
+            with open( self.ver_file, 'rb' ) as f:
+                timing = decrypt_bytes( f.read(), PRIVATE_KEY )
+
+            if timing is bytes:
+                last = int.from_bytes( timing, 'big' )
+            else:
+                last = None
+
+            # too quick? sleep
+            now   = datetime.now(timezone.utc)
+            now_e = encode_time( now )
+            if last is None:
+                delta = 0
+            else:
+                delta = (now_e - last)*TICK
+
+            if delta < VERIFY_INT:
+                sleep( VERIFY_INT - delta )
+                now = encode_time( datetime.now(timezone.utc) )
+
+            # write the current time
+            with open( self.gen_file, 'rb' ) as f:
+                bytecount = (now.bit_length() + 7) >> 3
+                f.write( encrypt_bytes( now.to_bytes(bytecount, 'big'), PRIVATE_KEY ) )
+
+            # release lock
 
     def verify(self, seed: bytes, cat: int, time: int) -> bool:
         """Do the remaining verification of a ticket, things that 
@@ -331,13 +353,23 @@ def get_salt() -> tuple[bytes,bool]:
 
     return token_bytes(64), True
 
-##### GENERATED VARIABLES
+##### GENERATED/FIXED VARIABLES
+
+assert BLOCKS in [1,2]
+
+TICK = 0.125
+INVTICK = 8
 
 PRIVATE_KEY, RANDOM_KEY = get_key()
 SALT, RANDOM_SALT       = get_salt()
 
-url_map = dict()        # for mapping between url names and category numbers
-cat_map = dict()        # for mapping between category numbers and classes
+url_map  = dict()        # for mapping between url names and category numbers
+cat_map  = dict()        # for mapping between category numbers and classes
+cat_list = list()        # (url,name) tuples for printing at the bottom of pages
+
+seed_total = 0           # used for picking a random category, weighted by seed count
+seed_bits  = 0
+seed_list  = list()
 
 # the verify interval is identical for all categories
 if BLOCKS == 2:
@@ -348,43 +380,74 @@ else:
 
 ##### MAIN
 
-# for each potential category of seeds,
-#  load it up and register it
+# init the web framework, so we can start logging
+site = Flask(__name__)
+
+site.logging.info(  "Initialized Flask." )
+site.logging.info( f"LIVE_TIME = {LIVE_TIME}." )
+site.logging.info( f"DEAD_TIME = {DEAD_TIME}." )
+site.logging.info( f"LD50 = {LD50}." )
+site.logging.info( f"FORGE_SUCCESS = {FORGE_SUCCESS}." )
+site.logging.info( f"TIMEOUT = {TIMEOUT}." )
+site.logging.info( f"BLOCKS = {BLOCKS}." )
+site.logging.info( f"VERIFY_INT = {VERIFY_INT}s." )
+
+if RANDOM_KEY:
+    site.logging.info( "Using a randomly-generated PRIVATE_KEY." )
+else:
+    site.logging.info( f"PRIVATE_KEY is user-specified, of length {len(PRIVATE_KEY)}." )
+
+if RANDOM_SALT:
+    site.logging.info( "Using a randomly-generated SALT." )
+else:
+    site.logging.info( f"SALT is user-specified, of length {len(SALT)}." )
+
+site.logging.info(  "Loading seeds." )
+
+# load up and register the seeds
+for idx in range(256):
+
+    temp = None
+    try:
+        temp = Category(idx)
+    except:
+        continue        # no point carrying on
+
+    cat_map[ idx ]      = temp
+    url_map[ temp.url ] = idx
+    cat_list.append( (temp.url,temp.name) )
+
+    seed_list.append( (temp.seed_count + seed_total, idx) )
+    seed_total += temp.seed_count
+
+site.logging.info( f"Loaded {seed_total} total seeds in {len(cat_map)} categories." )
+seed_bits = seed_total.bit_length()
 
 
-web_site = Flask(__name__)
-
-@web_site.route('/')
+@site.route('/')
 def index():
-    # redirect to one of the loaded seeds
+    # redirect to a random seed from a random category
     return create_ticket( None )
 
-@web_site.route('/time')
+@site.route('/time')
 def current_time():
     # display the server's current time
     return render_template( 'time.html', time=int(datetime.now(timezone.utc)) )
 
-@web_site.route('/ticket/', defaults={'cat': None})
-@web_site.route('/ticket/<cat>')
+@site.route('/ticket/', defaults={'cat': None})
+@site.route('/ticket/<cat>')
 def create_ticket(cat):
-    if cat is None:
+
+    num = None
+    if cat is not in cat_urls:
         # pick a random category from cat_urls
+    else:
+        num = cat_urls[cat]
 
-    if cat in cat_urls:
-        # display the ticket for that 
-        app.logger.info('%s failed to log in', user.username)
 
-	if not username:
-		username = request.args.get('username')
-
-	if not username:
-		return 'Sorry error something, malformed request.'
-
-	return render_template('personal_user.html', user=username)
-
-@web_site.route('/validate/<seed>/<ticket>')
+@site.route('/validate/<seed>/<ticket>')
 def validate(seed, ticket):
     # validate the ticket
     return render_template('page.html', code=choice(number_list))
 
-web_site.run(host='0.0.0.0', port=8080)
+site.run(host='0.0.0.0', port=8080)
