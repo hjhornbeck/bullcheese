@@ -10,7 +10,7 @@ DEAD_TIME = 14*24*60*60   # (two weeks)
 
 # if someone constantly grabbed tickets, how long until they 
 #  have a 50/50 chance of getting the seed they want?
-LD50 = 86400              # (one week)
+LD50 = 31*86400           # (31 days)
 
 # if a crooked validator tried to brute-force a valid ticket,
 #  what are the maximal odds of success over DEAD_TIME seconds?
@@ -33,23 +33,29 @@ TMP_DIR = "/tmp"
 
 # beyond this point, you shouldn't have to edit any variables manually
 
+assert BLOCKS in [1,2]
+
+TICK = 0.125
+INVTICK = 8
 
 ##### IMPORTS
 
 from binascii import unhexlify
+
+from datetime import datetime, timedelta, timezone
 
 import errno
 
 from flask import Flask, render_template, request
 from filelock import Timeout, FileLock
 
-from math import ceil, log2
+from math import log, log1p
 
 from os import getenv, strerror
 
 from secrets import randbits, token_bytes
 
-from time import time
+from time import sleep
 from typing import Optional
 
 from utils.fsg_seeds import load_seeds, parse_seeds
@@ -64,30 +70,30 @@ from utils.fsg_ticket import unsigned_to_signed
 
 class Category:
     """An abstract representation of a seed category. The brains of the operation."""
+
     def __init__(self, num: int):
         """Create a Category, given the following arguments.
 
         PARAMETERS
         ==========
         num:             The category's number. Must be positive or zero.
+
+        RAISES
+        ======
+        Various I/O exceptions, depending on whether files are where we expect or
+           are writable.
         """
-        global FORGE_SUCCESS, LD50, SALT, TIMEOUT, TMP_DIR
+        global LD50, SALT, TIMEOUT, TMP_DIR
 
         assert num > 0      # unsigned only!
 
         self.numeric = num
 
         # load the seed file early so we can signal quickly
-        self.url, self.name, self.seeds = load_seeds( self.seed_file() )
-        if self.seeds is None:
+        result = load_seeds( self.seed_file() )
+        if result is None:
             raise FileNotFoundError(errno.ENOENT, strerror(errno.ENOENT), self.seed_file())
-
-        self.seed_count = len(seeds) >> 3
-        self.seed_bits  = int(ceil(log2( self.seed_count )))
-
-        # calculate the generate and verify interval from the number of seeds
-        self.gen    = gen_interval
-        self.verify = verify_interval
+        self.url, self.name, self.seeds = result
 
         # generate the filenames and locks 
         gen_lock_file = hash_bytes( f"{num:03d}.generate.lock", SALT ).hex()
@@ -98,30 +104,195 @@ class Category:
         self.ver_lock = FileLock( f"{TMP_DIR}/{ver_lock_file}", timeout=TIMEOUT )
         self.ver_file = TMP_DIR + '/' + hash_bytes( f"{num:03d}.verify.file", SALT ).hex()
 
-    def seed_file(self):
+        # it'd be wise to try writing to those files before going further
+        now       = encode_time( datetime.now(timezone.utc) )
+        bytecount = (now.bit_length() + 7) >> 3
+        now_b     = encrypt_bytes( now.to_bytes( bytecount, 'big' ), PRIVATE_KEY )
+
+        with open( self.gen_file, 'wb' ) as f:      # exceptions are passed up
+            f.write( now_b )
+        with open( self.ver_file, 'wb' ) as f:
+            f.write( now_b )
+
+        self.seed_count = len(seeds) >> 3
+        self.seed_bits  = self.seed_count.bit_length()
+
+        # calculate the generate interval from the number of seeds
+        self.gen    = LD50 * log1p( -1/self.seed_count ) / log( .5 )
+
+
+    def seed_file(self) -> str:
         """Return the file associated with this seed category."""
         global SEED_DIR
 
         return f"{SEED_DIR}/{self.numeric:03d}.seeds.gz"
 
-    def generate(self):
+    def generate(self) -> tuple[bytes,datetime.datetime,str]:
         """Generate a ticket. A smart wrapper around generate_ticket().
 
         RETURN
         ======
         A tuple of the form (seed, time, ticket), where seed is an int,
            time is a datetime object, and ticket a string.
+
+        RAISES
+        ======
+        Timeout if the lock couldn't be acquired before TIMEOUT.
+        Various I/O errors if the lock or last time generated couldn't
+           be read.
         """
-        global BLOCKS, PRIVATE_KEY, SALT
+        global BLOCKS, PRIVATE_KEY
+
+        last = encode_time( datetime.now(timezone.utc) )
+        now  = datetime.now(timezone.utc)
+
+                    # acquire lock
+        with self.gen_lock:
+
+                    # read the last access time
+            with open( self.gen_file, 'rb' ) as f:
+                timing = decrypt_bytes( f.read(), PRIVATE_KEY )
+
+            if timing is bytes:
+                last = int.from_bytes( timing, 'big' )
+
+            # too quick? sleep
+            now   = datetime.now(timezone.utc)
+            now_e = encode_time( now )
+            delta = (now_e - last)*TICK
+
+            if delta < self.gen:
+                sleep( self.gen - delta )
+                now = encode_time( datetime.now(timezone.utc) )
+
+            # write the current time
+            with open( self.gen_file, 'rb' ) as f:
+                bytecount = (now.bit_length() + 7) >> 3
+                f.write( encrypt_bytes( now.to_bytes(bytecount, 'big'), PRIVATE_KEY ) )
+
+            # release lock
+
+        # randomly pick seed via rejection sampling
+        idx = randbits( self.seed_bits )
+        while idx >= self.seed_count:
+            idx = randbits( self.seed_bits )
+        offset = idx << 3
+
+        # pass to generate_ticket()
+        ticket = generate_ticket( self.seeds[ offset:offset+8 ], self.numeric, now, \
+                SALT, PRIVATE_KEY, BLOCKS )
+
+        return self.seeds[ offset:offset+8 ], now, ticket
+
+    def verify_pause(self):
+        """Handle the pause associated with verification. Allows external
+           code to throttle when its known verification failed.
+        """
 
         # acquire lock
         # read last access time
         # too quick? sleep
         # write current time
         # release lock
-        # randomly pick seed
-        # pass to generate_ticket()
-        # return
+
+    def verify(self, seed: bytes, cat: int, time: int) -> bool:
+        """Do the remaining verification of a ticket, things that 
+           decrypt_ticket() cannot do.
+
+        PARAMETERS
+        ==========
+        seed: The Minecraft seed, as a bytes object.
+        cat: The category of the seed.
+        time: 1/8ths of a second since the epoch.
+
+        RETURN
+        ======
+        True if the ticket is fully verified, False otherwise.
+        """
+        
+        # easy stuff first
+        if cat != self.numeric:
+            return False
+
+        # finally, check the seed is in our archive
+        # check two edge cases
+        if (self.seeds[-8:] < seed) or (self.seeds[:8] > seed)
+            return False
+
+        # estimate where to find the seed
+        estimate = int( int.from_bytes( seed, 'big' ) * self.seed_count / (1 << 64) )
+        
+        # ensure the estimate is a valid index
+        if estimate >= self.seed_count:
+            estimate = self.seed_count - 1
+        elif estimate < 0:
+            estimate = 0            # should never happen, but branch prediction makes this cheap
+
+        # did we get lucky?
+        offset = estimate << 3
+        if self.seeds[ offset:offset+8 ] == seed:
+            return True
+
+        # too low? set that location to be left, scan for right
+        if self.seeds[ offset:offset+8 ] < seed:
+            left = estimate
+            step = 1
+            right = estimate + step
+
+            while right < self.seed_count:
+                offset = right << 3
+                if self.seeds[ offset:offset+8 ] < seed:
+                    step <<= 1
+                    right += step
+                elif self.seeds[ offset:offset+8 ] == seed:
+                    return True
+                else:
+                    break
+
+            if right >= self.seed_count:
+                right = self.seed_count - 1
+
+        # too high? set that location to be right, scan for left
+        else:
+            right = estimate
+            step = 1
+            left = estimate - step
+
+            while left > 0:
+                offset = left << 3
+                if self.seeds[ offset:offset+8 ] > seed:
+                    step <<= 1
+                    left -= step
+                elif self.seeds[ offset:offset+8 ] == seed:
+                    return True
+                else:
+                    break
+
+            if left < 0:
+                left = 0
+
+        # binary search, but only up to a limit
+        while (right - left) > 8:          # TODO: what limit is optimal?
+
+            middle = (left + right) >> 1
+            offset = middle << 3
+
+            if self.seeds[ offset:offset+8 ] == seed:
+                return True
+            elif self.seeds[ offset:offset+8 ] < seed:
+                left = middle
+            else:
+                right = middle
+
+        # within the limit? Linear scan
+        for idx in range(left,right+1):
+            offset = idx << 3
+            if self.seeds[ offset:offset+8 ] == seed:
+                return True
+
+        # still not found? It's not on the list
+        return False
+
 
 ##### METHODS
 
@@ -168,12 +339,17 @@ SALT, RANDOM_SALT       = get_salt()
 url_map = dict()        # for mapping between url names and category numbers
 cat_map = dict()        # for mapping between category numbers and classes
 
+# the verify interval is identical for all categories
+if BLOCKS == 2:
+    VERIFY_INT = DEAD_TIME * log1p( -1/(1 << (19*8)) ) / log1p( -FORGE_SUCCESS )
+else:
+    VERIFY_INT = DEAD_TIME * log1p( -1/(1 << (3*8)) ) / log1p( -FORGE_SUCCESS )
+
+
 ##### MAIN
 
 # for each potential category of seeds,
 #  load it up and register it
-
-# init more variables
 
 
 web_site = Flask(__name__)
@@ -186,7 +362,7 @@ def index():
 @web_site.route('/time')
 def current_time():
     # display the server's current time
-    return render_template( 'time.html', time=int(time()) )
+    return render_template( 'time.html', time=int(datetime.now(timezone.utc)) )
 
 @web_site.route('/ticket/', defaults={'cat': None})
 @web_site.route('/ticket/<cat>')
