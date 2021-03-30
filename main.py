@@ -52,6 +52,7 @@ from os import getenv, strerror
 from secrets import randbits, token_bytes
 
 from time import sleep
+from traceback import format_exc
 from typing import Optional
 
 from utils.fsg_seeds import load_seeds, parse_seeds
@@ -137,7 +138,7 @@ class Category:
         Various I/O errors if the lock or last time generated couldn't
            be read.
         """
-        global BLOCKS, PRIVATE_KEY
+        global BLOCKS, PRIVATE_KEY, SALT, TICK
 
         last = encode_time( datetime.now(timezone.utc) )
         now  = None     # probably unnecessary
@@ -159,7 +160,7 @@ class Category:
 
             if delta < self.gen:
                 sleep( self.gen - delta )
-                now = encode_time( datetime.now(timezone.utc) )
+                now = datetime.now(timezone.utc)
 
             # write the current time
             with open( self.gen_file, 'rb' ) as f:
@@ -175,8 +176,8 @@ class Category:
         offset = idx << 3
 
         # pass to generate_ticket()
-        ticket = generate_ticket( self.seeds[ offset:offset+8 ], self.numeric, now, \
-                SALT, PRIVATE_KEY, BLOCKS )
+        ticket = generate_ticket( self.seeds[ offset:offset+8 ], self.numeric, \
+                encode_time( now ), SALT, PRIVATE_KEY, BLOCKS )
 
         return self.seeds[ offset:offset+8 ], now, ticket
 
@@ -184,7 +185,7 @@ class Category:
         """Handle the pause associated with verification. Allows external
            code to throttle when its known verification failed.
         """
-        global VERIFY_INT
+        global PRIVATE_KEY, VERIFY_INT, TICK
 
                     # acquire lock
         with self.ver_lock:
@@ -371,6 +372,8 @@ seed_total = 0           # used for picking a random category, weighted by seed 
 seed_bits  = 0
 seed_list  = list()
 
+validator = None         # use this Category to handle validation throttling
+
 # the verify interval is identical for all categories
 if BLOCKS == 2:
     VERIFY_INT = DEAD_TIME * log1p( -1/(1 << (19*8)) ) / log1p( -FORGE_SUCCESS )
@@ -420,6 +423,9 @@ for idx in range(256):
     seed_list.append( (temp.seed_count + seed_total, idx) )
     seed_total += temp.seed_count
 
+    if validator is None:
+        validator = temp
+
 site.logging.info( f"Loaded {seed_total} total seeds in {len(cat_map)} categories." )
 seed_bits = seed_total.bit_length()
 
@@ -432,22 +438,103 @@ def index():
 @site.route('/time')
 def current_time():
     # display the server's current time
-    return render_template( 'time.html', time=int(datetime.now(timezone.utc)) )
+    return render_template( 'time.html', time=int(datetime.now(timezone.utc).timestamp()) )
 
 @site.route('/ticket/', defaults={'cat': None})
 @site.route('/ticket/<cat>')
 def create_ticket(cat):
 
-    num = None
     if cat is not in cat_urls:
-        # pick a random category from cat_urls
-    else:
-        num = cat_urls[cat]
+        # pick a random seed
+        idx = randbits( seed_bits )
+        while idx >= seed_total:
+            idx = randbits( seed_bits )
 
+        # figure out which category this seed is in
+        if idx < seed_list[0]:
+            cat = cat_list[0][0]
+        else:
+            left = 0
+            right = len(seed_list)-1
+            while (right - left) > 8:
+                middle = (left + right) >> 1
+                if seed_list[middle] > idx:
+                    right = middle
+                else:
+                    left = middle
+            for i in range(left,right+1):
+                if idx < seed_list[i]:
+                    cat = cat_list[i][0]
+                    break
+            else:
+                cat = cat_list[right][0]
+
+    num = cat_urls[cat]
+    try:
+        output = cat_map[num].generate()
+    except:
+        site.logging.error(f"Exception when generating a ticket: {format_exc()}" )
+        return render_template( 'error.html' )
+
+    seed, time, ticket = output
+    seed_i = unsigned_to_signed( int.from_bytes(seed,'big') )
+    ticket_p = pretty_ticket(ticket)
+
+    site.logging.info(f"Created ticket {ticket_p} for category {num} and seed {seed_i}" )
+
+    return render_template( 'generated.html', seed=seed_i, name=cat_map[num].name, time=time, \
+            ticket=ticket_p, cats=cat_list )
 
 @site.route('/validate/<seed>/<ticket>')
 def validate(seed, ticket):
-    # validate the ticket
-    return render_template('page.html', code=choice(number_list))
+    global PRIVATE_KEY, SALT, TICK
+
+    # throttling first
+    validator.verify_throttle()
+    now = datetime.now(timezone.utc)
+    now_e = encode_time( now )
+
+    # try to convert the seed from a string to an unsigned int
+    try:
+        seed_i = int(seed)
+    except:
+        site.logging.info(f"Asked to validate an invalid seed, ignoring." )
+        return render_template( 'invalid_expired.html', cats=cat_list )
+
+    if (seed_i > ((1 << 63) - 1)) or (seed_i < -(1 << 63)):
+        site.logging.info(f"Asked to validate a seed that's too large or small, ignoring." )
+        return render_template( 'invalid_expired.html', cats=cat_list )
+
+    seed_b = (seed_i & ((1 << 64) - 1)).to_bytes( 8, 'big' )
+
+    # time to check the ticket format
+    ticket_b = clean_ticket( ticket )
+    if len(ticket_b) not in [16,32]:
+        site.logging.info(f"Asked to validate a ticket that's improperly formatted, ignoring." )
+        return render_template( 'invalid_expired.html', cats=cat_list )
+
+    # next up, decrypt the ticket
+    results = decrypt_ticket( seed_b, ticket_b, PRIVATE_KEY, SALT )
+    if results is None:
+        site.logging.info(f"Asked to validate an invalid ticket for seed {seed_i}." )
+        return render_template( 'invalid_expired.html', cats=cat_list )
+
+    seed_n, cat, time = results
+    if not cat_map[cat].verify( seed, cat, time ):
+        site.logging.info(f"Secondary validation failed for seed {seed_i} and ticket {ticket}." )
+        return render_template( 'invalid_expired.html', cats=cat_list )
+
+    # ah, but how much time has elapsed?
+    delta  = (now_e - time)*TICK
+    time_d = decode_time( time )
+    if delta < LIVE_TIME:
+        return rended_template( 'live.html', seed=seed_i, time=int(LIVE_TIME - delta + .5), \
+                name=cat_map[cat], cats=cat_list )
+
+    elif delta < DEAD_TIME:
+        dtime_str = (time_d + timedelta(seconds=LIVE_TIME)).strftime("%Y/%m/%d %H:%M")
+        return render_template( 'dead.html', time=dtime_str, name=cat_map[cat], cats=cat_list )
+
+    return render_template( 'invalid_expired.html', cats=cat_list )
 
 site.run(host='0.0.0.0', port=8080)

@@ -1,0 +1,42 @@
+<!DOCTYPE html><html lang="en-US"><head>
+ <meta charset="utf-8" />
+ <meta name="viewport" content="width=device-width,initial-scale=1" />
+ <meta name="theme-color" content="#ffffff" />
+ <meta name="robots" content="noindex, nofollow" />
+ <style>
+body { background: #cde; color: #321; text-align: center; margin: 0px; }
+ </style>
+</head><body>
+
+	<div style="height: 100vh; display: flex; flex-flow: column wrap; justify-content: center">
+		<span id="clock" style="flex: 0 1 auto; margin: auto; font-size: xx-large">&nbsp;</span>
+	</div>
+
+<script type='text/javascript'>
+	/* https://stackoverflow.com/questions/951021/what-is-the-javascript-version-of-sleep/39914235#39914235 */
+	function sleep(ms) {
+		  return new Promise(resolve => setTimeout(resolve, ms));
+	}
+
+	async function update_clock() {
+		var server_time = {{time}} * 1000;
+		var last = (new Date()).getTime();
+		var printed = new Date();
+		while( 1 ) {
+
+			var target = document.getElementById("clock");
+			var now = (new Date()).getTime();
+			var delta = (now - last);
+			server_time += delta;
+			printed.setTime( server_time );
+			if( target ) {
+				target.innerText = printed.toLocaleString();
+				target.title = printed.toString();
+				}
+			last = now;
+			await sleep( 100 );
+			}
+		}
+	update_clock();
+</script>
+</body></html>
