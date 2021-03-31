@@ -1,0 +1,33 @@
+<!DOCTYPE html><html lang="en-US"><head>
+ <meta charset="utf-8" />
+ <meta name="viewport" content="width=device-width,initial-scale=1" />
+ <meta name="theme-color" content="#ffffff" />
+ <meta name="robots" content="noindex, nofollow" />
+ <style>
+body { background: #902; color: #fed; text-align: center; margin: 0px; }
+ </style>
+</head><body>
+
+	<div style="height: 100vh; display: flex; flex-flow: column wrap; justify-content: center">
+	<span style="flex: 0 1 auto; margin: auto; width: 100%; font-size: x-large">
+	<h1>Invalid / Expired</h1>
+	</span>
+	</div>
+
+	<div style="position: absolute; width: 100%; bottom: 0px">
+		<select id="choice" onchange="navigate()">
+			<option value="" selected>---</option>
+			{% for val in cats -%}
+			<option value="{{val[0]}}">{{val[1]}}</option>
+			{% endfor %}
+		</select>
+	</div>
+	<script>
+		function navigate() {
+
+			var target = document.getElementById("choice");
+			if( target )
+				window.location = "/generate/" + target.value;
+			}
+	</script>
+</body></html>
