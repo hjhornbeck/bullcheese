@@ -101,7 +101,7 @@ def read_TSVs( files, sort=True ):
     assert type(files) in [tuple, list]
     assert type(sort) is bool
 
-    seeds = list()
+    seeds = set()
     for filename in files:
         # open depending on gzip or bare
         try:
@@ -121,12 +121,13 @@ def read_TSVs( files, sort=True ):
 
             # convert to unsigned and pack
             seed &= ((1 << 64) - 1)
-            seeds.append( seed.to_bytes(8, 'big') )
+            seeds.add( seed.to_bytes(8, 'big') )
 
+    temp = list(seeds)
     if sort:
-        seeds.sort()
+        temp.sort()
 
-    return seeds
+    return temp
 
 def pack_seeds( url, name, seeds, sort=True ):
     """Create a seed file.

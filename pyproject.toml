@@ -1,0 +1,9 @@
+[tool]
+[tool.poetry]
+authors = ["hjhornbeck"]
+name = "bullcheese"
+version = "1.0.0"
+description="Hand out tickets for Filtered Seed Glitchless."
+[tool.poetry.dependencies]
+flask = "==1.1.2"
+python = "^3.9"
