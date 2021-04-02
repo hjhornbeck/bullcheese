@@ -482,27 +482,27 @@ def create_ticket(cat):
 
     site.logging.info(f"Created ticket {ticket_p} for category {num} and seed {seed_i}" )
 
-    return render_template( 'generated.html', seed=seed_i, name=cat_map[num].name, time=time, \
+    return render_template( 'generated.html', seed=seed_i, name=cat_map[num].name, time=LIVE_TIME, \
             ticket=ticket_p, cats=cat_list )
 
 @site.route('/validate/<seed>/<ticket>')
 def validate(seed, ticket):
     global PRIVATE_KEY, SALT, TICK
 
-    # throttling first
-    validator.verify_throttle()
-    now = datetime.now(timezone.utc)
-    now_e = encode_time( now )
+    # defer on throttling; if we take <1/8th of a second to validate in all scenarios,
+    #  then throttling just before any exit removes a side-channel attack.
 
     # try to convert the seed from a string to an unsigned int
     try:
         seed_i = int(seed)
     except:
         site.logging.info(f"Asked to validate an invalid seed, ignoring." )
+        validator.verify_throttle()
         return render_template( 'invalid_expired.html', cats=cat_list )
 
     if (seed_i > ((1 << 63) - 1)) or (seed_i < -(1 << 63)):
         site.logging.info(f"Asked to validate a seed that's too large or small, ignoring." )
+        validator.verify_throttle()
         return render_template( 'invalid_expired.html', cats=cat_list )
 
     seed_b = (seed_i & ((1 << 64) - 1)).to_bytes( 8, 'big' )
@@ -511,30 +511,40 @@ def validate(seed, ticket):
     ticket_b = clean_ticket( ticket )
     if len(ticket_b) not in [16,32]:
         site.logging.info(f"Asked to validate a ticket that's improperly formatted, ignoring." )
+        validator.verify_throttle()
         return render_template( 'invalid_expired.html', cats=cat_list )
 
     # next up, decrypt the ticket
     results = decrypt_ticket( seed_b, ticket_b, PRIVATE_KEY, SALT )
     if results is None:
         site.logging.info(f"Asked to validate an invalid ticket for seed {seed_i}." )
+        validator.verify_throttle()
         return render_template( 'invalid_expired.html', cats=cat_list )
 
     seed_n, cat, time = results
     if not cat_map[cat].verify( seed, cat, time ):
         site.logging.info(f"Secondary validation failed for seed {seed_i} and ticket {ticket}." )
+        validator.verify_throttle()
         return render_template( 'invalid_expired.html', cats=cat_list )
 
     # ah, but how much time has elapsed?
+    now = datetime.now(timezone.utc)
+    now_e = encode_time( now )
     delta  = (now_e - time)*TICK
-    time_d = decode_time( time )
     if delta < LIVE_TIME:
+        validator.verify_throttle()
         return rended_template( 'live.html', seed=seed_i, time=int(LIVE_TIME - delta + .5), \
                 name=cat_map[cat], cats=cat_list )
 
     elif delta < DEAD_TIME:
-        dtime_str = (time_d + timedelta(seconds=LIVE_TIME)).strftime("%Y/%m/%d %H:%M")
-        return render_template( 'dead.html', time=dtime_str, name=cat_map[cat], cats=cat_list )
+        time_d    = decode_time( time )
+        dtime     = (time_d + timedelta(seconds=LIVE_TIME))
+        dtime_utc = datetime( dtime.year, dtime.month, dtime.day, dtime.hour, dtime.minute, \
+                tzinfo=timezone.utc )
+        validator.verify_throttle()
+        return render_template( 'dead.html', time=dtime_utc.timestamp(), name=cat_map[cat], cats=cat_list )
 
+    validator.verify_throttle()
     return render_template( 'invalid_expired.html', cats=cat_list )
 
 site.run(host='0.0.0.0', port=8080)

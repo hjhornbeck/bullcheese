@@ -1,0 +1,72 @@
+<!DOCTYPE html><html lang="en-US"><head>
+ <meta charset="utf-8" />
+ <meta name="viewport" content="width=device-width,initial-scale=1" />
+ <meta name="theme-color" content="#ffffff" />
+ <meta name="robots" content="noindex, nofollow" />
+ <title>LIVE</title>
+ <style>
+body { background: #1f4; color: #312; text-align: center; margin: 0px; }
+ </style>
+</head><body>
+
+	<div style="height: 100vh; display: flex; flex-flow: column wrap; justify-content: center">
+	<span style="flex: 0 1 auto; margin: auto; width: 100%; font-size: x-large">
+	<h1>LIVE</h1>
+	<p>The <b>{{ name }}</b> seed</p>
+	<h2 id="seed">{{ seed }}</h2>
+	<p>is still valid for</p>
+	<h1 id="clock">2:00:00</h1>
+	</span>
+	</div>
+
+	<div style="position: absolute; width: 100%; bottom: 0px">
+		<select id="choice" onchange="navigate()">
+			<option value="" selected>---</option>
+			{% for val in cats -%}
+			<option value="{{val[0]}}">{{val[1]}}</option>
+			{% endfor %}
+		</select>
+	</div>
+<script type='text/javascript'>
+
+	/* https://stackoverflow.com/questions/951021/what-is-the-javascript-version-of-sleep/39914235#39914235 */
+	function sleep(ms) {
+		  return new Promise(resolve => setTimeout(resolve, ms));
+	}
+
+	async function update_timer() {
+		var remaining = {{ time }} * 1000;
+		console.log( remaining );
+		var last = new Date();
+		while( remaining > 0 ) {
+
+			var target = document.getElementById("clock");
+			if( target ) {
+				var now = new Date();
+				remaining -= (now.getTime() - last.getTime());
+				last = now;
+				var hours = Math.floor(remaining / 3600000);
+				var minutes = Math.floor(remaining / 60000) % 60;
+				if( minutes < 10 )
+					minutes = "0" + minutes;
+				var seconds = Math.floor(remaining / 1000) % 60;
+				if( seconds < 10 )
+					seconds = "0" + seconds;
+				target.innerText = hours + ":" + minutes + ":" + seconds;
+				}
+			await sleep( 100 );
+
+			}
+
+		location.reload();
+		}
+	function navigate() {
+
+		var target = document.getElementById("choice");
+		if( target )
+			window.location = "/generate/" + target.value;
+		}
+
+	update_timer();
+</script>
+</body></html>
