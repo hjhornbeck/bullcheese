@@ -9,7 +9,11 @@ body { background: #cde; color: #321; text-align: center; margin: 0px; }
 </head><body>
 
 	<div style="height: 100vh; display: flex; flex-flow: column wrap; justify-content: center">
-		<span id="clock" style="flex: 0 1 auto; margin: auto; font-size: xx-large">&nbsp;</span>
+	<span style="flex: 0 1 auto; margin: auto;">
+		<h1 id="clock">&nbsp;</h1>
+		<p style="font-size: small">This server started on:</p>
+		<h2 id="boot">&nbsp;</h2>
+	</span>
 	</div>
 
 <script type='text/javascript'>
@@ -19,10 +23,24 @@ body { background: #cde; color: #321; text-align: center; margin: 0px; }
 	}
 
 	async function update_clock() {
-		var server_time = {{time}} * 1000;
+		var uptime = /* {{uptime}} */ 9000 * 1000;
 		var last = (new Date()).getTime();
+		var server_boot = new Date();
+		server_boot.setTime( last - uptime );
+
+		var server_time = /* {{time}} */ 1617416517 * 1000;
 		var printed = new Date();
 		while( 1 ) {
+
+			// only need to update the boot time once
+			if( server_boot != null ) {
+				var target = document.getElementById("boot");
+				if( target ) {
+					target.innerText = server_boot.toLocaleString();
+					target.title = server_boot.toString();
+					server_boot = null;
+					}
+				}
 
 			var target = document.getElementById("clock");
 			var now = (new Date()).getTime();

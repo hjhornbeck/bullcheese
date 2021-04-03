@@ -358,6 +358,8 @@ def get_salt() -> tuple[bytes,bool]:
 
 assert BLOCKS in [1,2]
 
+BOOT = int(datetime.now(timezone.utc).timestamp())
+
 TICK = 0.125
 INVTICK = 8
 
@@ -438,7 +440,7 @@ def index():
 @site.route('/time')
 def current_time():
     # display the server's current time
-    return render_template( 'time.html', time=int(datetime.now(timezone.utc).timestamp()) )
+    return render_template( 'time.html', time=int(datetime.now(timezone.utc).timestamp()), uptime=BOOT )
 
 @site.route('/ticket/', defaults={'cat': None})
 @site.route('/ticket/<cat>')
