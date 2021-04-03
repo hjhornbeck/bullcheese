@@ -42,7 +42,7 @@ from datetime import datetime, timedelta, timezone
 
 import errno
 
-from flask import Flask, render_template, request
+from flask import Flask, render_template
 from filelock import Timeout, FileLock
 
 from math import log, log1p
@@ -82,7 +82,7 @@ class Category:
         """
         global LD50, SALT, TIMEOUT, TMP_DIR
 
-        assert num > 0      # unsigned only!
+        assert num >= 0      # unsigned only!
 
         self.numeric = num
 
@@ -93,13 +93,13 @@ class Category:
         self.url, self.name, self.seeds = result
 
         # generate the filenames and locks 
-        gen_lock_file = hash_bytes( f"{num:03d}.generate.lock", SALT ).hex()
+        gen_lock_file = hash_bytes( f"{num:03d}.generate.lock".encode('utf-8'), SALT ).hex()
         self.gen_lock = FileLock( f"{TMP_DIR}/{gen_lock_file}", timeout=TIMEOUT )
-        self.gen_file = TMP_DIR + '/' + hash_bytes( f"{num:03d}.generate.file", SALT ).hex()
+        self.gen_file = TMP_DIR + '/' + hash_bytes( f"{num:03d}.generate.file".encode('utf-8'), SALT ).hex()
 
-        ver_lock_file = hash_bytes( f"{num:03d}.verify.lock", SALT ).hex()
+        ver_lock_file = hash_bytes( f"{num:03d}.verify.lock".encode('utf-8'), SALT ).hex()
         self.ver_lock = FileLock( f"{TMP_DIR}/{ver_lock_file}", timeout=TIMEOUT )
-        self.ver_file = TMP_DIR + '/' + hash_bytes( f"{num:03d}.verify.file", SALT ).hex()
+        self.ver_file = TMP_DIR + '/' + hash_bytes( f"{num:03d}.verify.file".encode('utf-8'), SALT ).hex()
 
         # it'd be wise to try writing to those files before going further
         now       = encode_time( datetime.now(timezone.utc) )
@@ -111,7 +111,7 @@ class Category:
         with open( self.ver_file, 'wb' ) as f:
             f.write( now_b )
 
-        self.seed_count = len(seeds) >> 3
+        self.seed_count = len(self.seeds) >> 3
         self.seed_bits  = self.seed_count.bit_length()
 
         # calculate the generate interval from the number of seeds
@@ -124,7 +124,7 @@ class Category:
 
         return f"{SEED_DIR}/{self.numeric:03d}.seeds.gz"
 
-    def generate(self) -> tuple[bytes,datetime.datetime,str]:
+    def generate(self): # -> tuple[bytes,datetime,str]:
         """Generate a ticket. A smart wrapper around generate_ticket().
 
         RETURN
@@ -161,11 +161,12 @@ class Category:
             if delta < self.gen:
                 sleep( self.gen - delta )
                 now = datetime.now(timezone.utc)
+                now_e = encode_time( now )
 
             # write the current time
-            with open( self.gen_file, 'rb' ) as f:
-                bytecount = (now.bit_length() + 7) >> 3
-                f.write( encrypt_bytes( now.to_bytes(bytecount, 'big'), PRIVATE_KEY ) )
+            with open( self.gen_file, 'wb' ) as f:
+                bytecount = (now_e.bit_length() + 7) >> 3
+                f.write( encrypt_bytes( now_e.to_bytes(bytecount, 'big'), PRIVATE_KEY ) )
 
             # release lock
 
@@ -177,7 +178,7 @@ class Category:
 
         # pass to generate_ticket()
         ticket = generate_ticket( self.seeds[ offset:offset+8 ], self.numeric, \
-                encode_time( now ), SALT, PRIVATE_KEY, BLOCKS )
+                now_e, SALT, PRIVATE_KEY, BLOCKS )
 
         return self.seeds[ offset:offset+8 ], now, ticket
 
@@ -212,7 +213,7 @@ class Category:
                 now = encode_time( datetime.now(timezone.utc) )
 
             # write the current time
-            with open( self.gen_file, 'rb' ) as f:
+            with open( self.gen_file, 'wb' ) as f:
                 bytecount = (now.bit_length() + 7) >> 3
                 f.write( encrypt_bytes( now.to_bytes(bytecount, 'big'), PRIVATE_KEY ) )
 
@@ -239,7 +240,7 @@ class Category:
 
         # finally, check the seed is in our archive
         # check two edge cases
-        if (self.seeds[-8:] < seed) or (self.seeds[:8] > seed)
+        if (self.seeds[-8:] < seed) or (self.seeds[:8] > seed):
             return False
 
         # estimate where to find the seed
@@ -319,7 +320,7 @@ class Category:
 
 ##### METHODS
 
-def get_key() -> tuple[bytes,bool]:
+def get_key(): # -> tuple[bytes,bool]:
     """Retrieve the private key, encoded in hexadecimal. If not present, 
        pick a value randomly.
 
@@ -337,7 +338,7 @@ def get_key() -> tuple[bytes,bool]:
 
     return token_bytes(32), True
 
-def get_salt() -> tuple[bytes,bool]:
+def get_salt(): # -> tuple[bytes,bool]:
     """Retrieve the salt. If not present, pick one randomly.
 
     RETURN
@@ -354,6 +355,16 @@ def get_salt() -> tuple[bytes,bool]:
 
     return token_bytes(64), True
 
+def discourage_caching(r):
+    """Add a few headers to tell the web browser *not* to cache pages. With the cache
+        enabled, some of the javascript breaks during navigation.
+        """
+    r.headers["Cache-Control"] = "no-store"
+    r.headers["Pragma"] = "no-cache"
+    r.headers["Expires"] = "0"
+    return r
+
+@site.route('/')
 ##### GENERATED/FIXED VARIABLES
 
 assert BLOCKS in [1,2]
@@ -388,26 +399,26 @@ else:
 # init the web framework, so we can start logging
 site = Flask(__name__)
 
-site.logging.info(  "Initialized Flask." )
-site.logging.info( f"LIVE_TIME = {LIVE_TIME}." )
-site.logging.info( f"DEAD_TIME = {DEAD_TIME}." )
-site.logging.info( f"LD50 = {LD50}." )
-site.logging.info( f"FORGE_SUCCESS = {FORGE_SUCCESS}." )
-site.logging.info( f"TIMEOUT = {TIMEOUT}." )
-site.logging.info( f"BLOCKS = {BLOCKS}." )
-site.logging.info( f"VERIFY_INT = {VERIFY_INT}s." )
+site.logger.info(  "Initialized Flask." )
+site.logger.info( f"LIVE_TIME = {LIVE_TIME}." )
+site.logger.info( f"DEAD_TIME = {DEAD_TIME}." )
+site.logger.info( f"LD50 = {LD50}." )
+site.logger.info( f"FORGE_SUCCESS = {FORGE_SUCCESS}." )
+site.logger.info( f"TIMEOUT = {TIMEOUT}." )
+site.logger.info( f"BLOCKS = {BLOCKS}." )
+site.logger.info( f"VERIFY_INT = {VERIFY_INT}s." )
 
 if RANDOM_KEY:
-    site.logging.info( "Using a randomly-generated PRIVATE_KEY." )
+    site.logger.info( "Using a randomly-generated PRIVATE_KEY." )
 else:
-    site.logging.info( f"PRIVATE_KEY is user-specified, of length {len(PRIVATE_KEY)}." )
+    site.logger.info( f"PRIVATE_KEY is user-specified, of length {len(PRIVATE_KEY)}." )
 
 if RANDOM_SALT:
-    site.logging.info( "Using a randomly-generated SALT." )
+    site.logger.info( "Using a randomly-generated SALT." )
 else:
-    site.logging.info( f"SALT is user-specified, of length {len(SALT)}." )
+    site.logger.info( f"SALT is user-specified, of length {len(SALT)}." )
 
-site.logging.info(  "Loading seeds." )
+site.logger.info(  "Loading seeds." )
 
 # load up and register the seeds
 for idx in range(256):
@@ -416,6 +427,7 @@ for idx in range(256):
     try:
         temp = Category(idx)
     except:
+        # print( f"DEBUG: Exception encountered: {format_exc()}" )
         continue        # no point carrying on
 
     cat_map[ idx ]      = temp
@@ -428,61 +440,75 @@ for idx in range(256):
     if validator is None:
         validator = temp
 
-site.logging.info( f"Loaded {seed_total} total seeds in {len(cat_map)} categories." )
+site.logger.info( f"Loaded {seed_total} total seeds in {len(cat_map)} categories." )
 seed_bits = seed_total.bit_length()
 
 
 @site.route('/')
 def index():
+
+    @after_this_request
+    def add_header(response):
+        return discourage_caching(response)
+
     # redirect to a random seed from a random category
     return create_ticket( None )
 
 @site.route('/time')
 def current_time():
+
+    @after_this_request
+    def add_header(response):
+        return discourage_caching(response)
+
     # display the server's current time
     return render_template( 'time.html', time=int(datetime.now(timezone.utc).timestamp()), uptime=BOOT )
 
-@site.route('/ticket/', defaults={'cat': None})
-@site.route('/ticket/<cat>')
+@site.route('/generate/', defaults={'cat': None})
+@site.route('/generate/<cat>')
 def create_ticket(cat):
 
-    if cat is not in cat_urls:
+    @after_this_request
+    def add_header(response):
+        return discourage_caching(response)
+
+    if not( cat in url_map ):
         # pick a random seed
         idx = randbits( seed_bits )
         while idx >= seed_total:
             idx = randbits( seed_bits )
 
         # figure out which category this seed is in
-        if idx < seed_list[0]:
+        if idx < seed_list[0][0]:
             cat = cat_list[0][0]
         else:
             left = 0
             right = len(seed_list)-1
             while (right - left) > 8:
                 middle = (left + right) >> 1
-                if seed_list[middle] > idx:
+                if seed_list[middle][0] > idx:
                     right = middle
                 else:
                     left = middle
             for i in range(left,right+1):
-                if idx < seed_list[i]:
+                if idx < seed_list[i][0]:
                     cat = cat_list[i][0]
                     break
             else:
                 cat = cat_list[right][0]
 
-    num = cat_urls[cat]
+    num = url_map[cat]
     try:
         output = cat_map[num].generate()
     except:
-        site.logging.error(f"Exception when generating a ticket: {format_exc()}" )
+        site.logger.error(f"Exception when generating a ticket: {format_exc()}" )
         return render_template( 'error.html' )
 
     seed, time, ticket = output
     seed_i = unsigned_to_signed( int.from_bytes(seed,'big') )
     ticket_p = pretty_ticket(ticket)
 
-    site.logging.info(f"Created ticket {ticket_p} for category {num} and seed {seed_i}" )
+    site.logger.info(f"Created ticket {ticket_p} for category {num} and seed {seed_i}" )
 
     return render_template( 'generated.html', seed=seed_i, name=cat_map[num].name, time=LIVE_TIME, \
             ticket=ticket_p, cats=cat_list )
@@ -491,6 +517,10 @@ def create_ticket(cat):
 def validate(seed, ticket):
     global PRIVATE_KEY, SALT, TICK
 
+    @after_this_request
+    def add_header(response):
+        return discourage_caching(response)
+
     # defer on throttling; if we take <1/8th of a second to validate in all scenarios,
     #  then throttling just before any exit removes a side-channel attack.
 
@@ -498,12 +528,12 @@ def validate(seed, ticket):
     try:
         seed_i = int(seed)
     except:
-        site.logging.info(f"Asked to validate an invalid seed, ignoring." )
+        site.logger.info(f"Asked to validate an invalid seed, ignoring." )
         validator.verify_throttle()
         return render_template( 'invalid_expired.html', cats=cat_list )
 
     if (seed_i > ((1 << 63) - 1)) or (seed_i < -(1 << 63)):
-        site.logging.info(f"Asked to validate a seed that's too large or small, ignoring." )
+        site.logger.info(f"Asked to validate a seed that's too large or small, ignoring." )
         validator.verify_throttle()
         return render_template( 'invalid_expired.html', cats=cat_list )
 
@@ -512,20 +542,20 @@ def validate(seed, ticket):
     # time to check the ticket format
     ticket_b = clean_ticket( ticket )
     if len(ticket_b) not in [16,32]:
-        site.logging.info(f"Asked to validate a ticket that's improperly formatted, ignoring." )
+        site.logger.info(f"Asked to validate a ticket that's improperly formatted, ignoring." )
         validator.verify_throttle()
         return render_template( 'invalid_expired.html', cats=cat_list )
 
     # next up, decrypt the ticket
     results = decrypt_ticket( seed_b, ticket_b, PRIVATE_KEY, SALT )
     if results is None:
-        site.logging.info(f"Asked to validate an invalid ticket for seed {seed_i}." )
+        site.logger.info(f"Asked to validate an invalid ticket for seed {seed_i}." )
         validator.verify_throttle()
         return render_template( 'invalid_expired.html', cats=cat_list )
 
     seed_n, cat, time = results
-    if not cat_map[cat].verify( seed, cat, time ):
-        site.logging.info(f"Secondary validation failed for seed {seed_i} and ticket {ticket}." )
+    if not cat_map[cat].verify( seed_b, cat, time ):
+        site.logger.info(f"Secondary validation failed for seed {seed_i} and ticket {ticket}." )
         validator.verify_throttle()
         return render_template( 'invalid_expired.html', cats=cat_list )
 
@@ -535,8 +565,8 @@ def validate(seed, ticket):
     delta  = (now_e - time)*TICK
     if delta < LIVE_TIME:
         validator.verify_throttle()
-        return rended_template( 'live.html', seed=seed_i, time=int(LIVE_TIME - delta + .5), \
-                name=cat_map[cat], cats=cat_list )
+        return render_template( 'live.html', seed=seed_i, time=int(LIVE_TIME - delta + .5), \
+                name=cat_map[cat].name, cats=cat_list )
 
     elif delta < DEAD_TIME:
         time_d    = decode_time( time )
@@ -544,7 +574,7 @@ def validate(seed, ticket):
         dtime_utc = datetime( dtime.year, dtime.month, dtime.day, dtime.hour, dtime.minute, \
                 tzinfo=timezone.utc )
         validator.verify_throttle()
-        return render_template( 'dead.html', time=dtime_utc.timestamp(), name=cat_map[cat], cats=cat_list )
+        return render_template( 'dead.html', time=dtime_utc.timestamp(), name=cat_map[cat].name, cats=cat_list )
 
     validator.verify_throttle()
     return render_template( 'invalid_expired.html', cats=cat_list )

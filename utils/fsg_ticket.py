@@ -58,10 +58,10 @@ def encrypt_bytes( input, key ):
     assert type(key) is bytes
     assert len(key) in [16, 24, 32]
 
-    iv = token_bytes( len(key) )
+    iv = token_bytes( 16 )  # AES always has block size 16
     tag = hash_bytes( input )
 
-    padder = padding.PKCS7( len(key)*8 ).padder()
+    padder = padding.PKCS7( 128 ).padder()
     padded = padder.update(input) + padder.update(tag) + \
             padder.finalize()
 
@@ -92,13 +92,13 @@ def decrypt_bytes( input, key ):
     if (len(input) % len(key)) != 0:    # only certain sizes are valid
         return None
 
-    iv = input[:len(key)]
+    iv = input[:16]
 
     cypher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=backend()).decryptor()
-    padded = cypher.update(input[len(key):]) + cypher.finalize()
+    padded = cypher.update(input[16:]) + cypher.finalize()
     del iv, cypher      # encourage GC
 
-    padder = padding.PKCS7( len(key)*8 ).unpadder()
+    padder = padding.PKCS7( 128 ).unpadder()
     try:
         tagged = padder.update(padded) + padder.finalize()
     except:

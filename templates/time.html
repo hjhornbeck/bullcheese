@@ -23,13 +23,13 @@ body { background: #cde; color: #321; text-align: center; margin: 0px; }
 	}
 
 	async function update_clock() {
-		var uptime = /* {{uptime}} */ 9000 * 1000;
-		var last = (new Date()).getTime();
+		var uptime = {{uptime}} * 1000;
 		var server_boot = new Date();
-		server_boot.setTime( last - uptime );
+		server_boot.setTime( uptime );
 
-		var server_time = /* {{time}} */ 1617416517 * 1000;
+		var server_time = {{time}} * 1000;
 		var printed = new Date();
+		var last = (new Date()).getTime();
 		while( 1 ) {
 
 			// only need to update the boot time once
