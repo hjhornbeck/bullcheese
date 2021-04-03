@@ -42,8 +42,10 @@ from datetime import datetime, timedelta, timezone
 
 import errno
 
-from flask import Flask, render_template
+from flask import after_this_request, Flask, render_template
 from filelock import Timeout, FileLock
+
+import logging
 
 from math import log, log1p
 
@@ -364,7 +366,6 @@ def discourage_caching(r):
     r.headers["Expires"] = "0"
     return r
 
-@site.route('/')
 ##### GENERATED/FIXED VARIABLES
 
 assert BLOCKS in [1,2]
@@ -393,6 +394,7 @@ if BLOCKS == 2:
 else:
     VERIFY_INT = DEAD_TIME * log1p( -1/(1 << (3*8)) ) / log1p( -FORGE_SUCCESS )
 
+logging.basicConfig( level=logging.INFO, format='%(asctime)s - %(module)s - %(levelname)s - %(message)s' )
 
 ##### MAIN
 
@@ -439,6 +441,8 @@ for idx in range(256):
 
     if validator is None:
         validator = temp
+        
+    site.logger.info(  f"Loaded {temp.seed_count} seeds in category '{temp.url}'." )
 
 site.logger.info( f"Loaded {seed_total} total seeds in {len(cat_map)} categories." )
 seed_bits = seed_total.bit_length()
@@ -508,7 +512,7 @@ def create_ticket(cat):
     seed_i = unsigned_to_signed( int.from_bytes(seed,'big') )
     ticket_p = pretty_ticket(ticket)
 
-    site.logger.info(f"Created ticket {ticket_p} for category {num} and seed {seed_i}" )
+    site.logger.info(f"Created ticket {ticket_p} for category '{cat}' and seed {seed_i}" )
 
     return render_template( 'generated.html', seed=seed_i, name=cat_map[num].name, time=LIVE_TIME, \
             ticket=ticket_p, cats=cat_list )
@@ -549,13 +553,13 @@ def validate(seed, ticket):
     # next up, decrypt the ticket
     results = decrypt_ticket( seed_b, ticket_b, PRIVATE_KEY, SALT )
     if results is None:
-        site.logger.info(f"Asked to validate an invalid ticket for seed {seed_i}." )
+        site.logger.warning(f"Asked to validate an invalid ticket for seed {seed_i}." )
         validator.verify_throttle()
         return render_template( 'invalid_expired.html', cats=cat_list )
 
     seed_n, cat, time = results
     if not cat_map[cat].verify( seed_b, cat, time ):
-        site.logger.info(f"Secondary validation failed for seed {seed_i} and ticket {ticket}." )
+        site.logger.warning(f"Secondary validation failed for seed {seed_i} and ticket {ticket}." )
         validator.verify_throttle()
         return render_template( 'invalid_expired.html', cats=cat_list )
 
