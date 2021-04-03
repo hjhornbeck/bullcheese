@@ -21,7 +21,9 @@ The lifespan of a ticket is divided into three periods: live, dead, and invalid/
 
 When asked to generate a ticket, the code picks a random seed from a list and calculates the following value:
 
-$$ \text{Encrypt}_\text{KEY}( seed, category, time, \text{Truncate}( \text{HMAC}_\text{SALT}( seed, category, time ) ) ) $$
+```
+Encrypt( KEY, seed, category, time,  Truncate(HMAC( SALT, seed, category, time )) )
+```
 
 `KEY` is the private key and `SALT` the salt, obviously. `seed` is the chosen Minecraft seed, as eight bytes. `category` is the numeric category the seed was chosen from, and one byte long. `time` is the time the ticket was created, but encoded in a special format. It is common to store times as the number of seconds since an "epoch" or reference time, typically January 1st 1970, but here the epoch is instead January 1st, 2021. The unit of time is not seconds, but eighths of a second; the choice of unit controls how often tickets are generated (no two tickets can have the same time) and effects the security, and this unit was thought to be a good compromise. The time occupies four bytes.
 
