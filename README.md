@@ -19,15 +19,19 @@ Seeds are organized into categories, which have a number, URL, and long name. Th
 
 The lifespan of a ticket is divided into three periods: *live*, *dead*, and *invalid/expired*. While it is *live*, the associated seed can be speedrun. A *dead* ticket can no longer result in a valid speedrun, but if validated it can still be verified by anyone. At all other times, the ticket cannot be run or verified and it is considered no different than random garbage pretending to be a ticket. The default live period ends two hours after the ticket was generated, and the default dead period ends two weeks after generation, but these values can be changed.
 
+### Generating a Ticket
+
 When asked to generate a ticket, the code picks a random seed from a list and calculates the following value:
 
 ```
 Encrypt( KEY, seed, category, time,  Truncate(HMAC( SALT, seed, category, time )) )
 ```
 
-`KEY` is the private key and `SALT` the salt, obviously. `seed` is the chosen Minecraft seed, as eight bytes. `category` is the numeric category the seed was chosen from, and one byte long. `time` is the time the ticket was created, but encoded in a special format. It is common to store times as the number of seconds since an "epoch" or reference time, typically January 1st 1970, but here the epoch is instead January 1st, 2021. The unit of time is not seconds, but eighths of a second; the choice of unit controls how often tickets are generated (no two tickets can have the same time) and effects the security, and this unit was thought to be a good compromise. The time occupies four bytes.
+`KEY` is the private key and `SALT` the salt, obviously. `seed` is the chosen Minecraft seed, as eight bytes. `category` is the numeric category the seed was chosen from, and one byte long.
 
-`HMAC` is short for "[keyed-Hash Message Authentication Code](https://en.wikipedia.org/wiki/HMAC)". It is a function that takes an arbitrary number of bytes plus a key, and converts both to a code of fixed length. In this case we use [SHA2-256](https://en.wikipedia.org/wiki/SHA-2), so the resulting code is 32 bytes long, and use the salt as the key. This code is cryptographically secure: no-one has found a way to use this code to learn anything about the original bytes given to the function. Without knowing the input and salt, it appears no different than a random number.
+`time` is the time the ticket was created, but encoded in a special format. It is common to store times as the number of seconds since an "epoch" or reference time, typically January 1st 1970, but here the epoch is instead January 1st, 2021. The unit of time is not seconds, but eighths of a second; the choice of unit controls how often tickets are generated, as no two tickets can have the same time, and effects the security. This unit was thought to be a good compromise. The time occupies four bytes.
+
+`HMAC` is short for "[keyed-Hash Message Authentication Code](https://en.wikipedia.org/wiki/HMAC)". It is a function that takes an arbitrary number of bytes plus a key, and converts both to a code of fixed length. In this case we use [SHA2-256](https://en.wikipedia.org/wiki/SHA-2) in HMAC mode, with the salt as the key. This 32-byte code is cryptographically secure: no-one has found a way to learn anything about the original bytes given to the function, given one of these codes. Without knowing the input and salt, it appears no different than a random number.
 
 `Truncate` is a function that discards the last bytes of the HMAC code. How many bytes are discarded depends on the size of the ticket: a two-block ticket (the default) discards the last thirteen bytes, so the entire length of the ticket is two 16-byte blocks long, while a one-block ticket discards the last twenty-nine bytes. The net result is exactly sixteen bytes long for a one-block ticket, after prepending the seed, category number, and time.
 
@@ -35,15 +39,11 @@ Encrypt( KEY, seed, category, time,  Truncate(HMAC( SALT, seed, category, time )
 
 This value is converted to a hexadecimal number. Dashes are inserted at specific places, both to make the ticket easier for humans to read but also to specify the version of the system used. The final result is a "ticket."
 
-Verification is done by reversing this process. Dashes are verified to be in the proper place, stripped out, and the hexadecimal number converted to a byte sequence. This sequence is decrypted with the private key, (hopefully) revealing the Minecraft seed, category, and ticket creation time. If the salt is known, the HMAC is calculated and verified to match what was included inside the ticket. Additional checks are done: does the provided seed match the one in the ticket? Does that category contain the seed? And which of the three periods does the creation time fall into?
+### Verification
 
-To help ensure the security of the system, ticket generation and verification are rate-limited. This makes it difficult to pull tickets from the server until you get the seed you want, or submit random garbage to discover a valid ticket, or even to forge a ticket that passes verification if you happen to know the private key. This will be detailed more in the section on security.
+Verification is done by reversing this process. Dashes are verified to be in the proper place, stripped out, and the hexadecimal number converted to a byte sequence. This is then decrypted with the private key, revealing the Minecraft seed, category, and ticket creation time. If the salt is known, the HMAC is calculated and verified to match what was included inside the ticket. Additional checks are done: does the provided seed match the one inside the ticket? Does that category contain the seed? And which of the three periods does the creation time fall into?
 
-There are many ways to deploy BullCheese, but we suspect the two most popular will be the following:
-
-* *Random Key, Random Salt*: The only way to verify a ticket is via the server. No validator is able to forge a ticket, and unless the administrator is a skilled hacker even they are ignorant of these values. There's nobody to bribe. Everything depends on that server remaining alive, though; if it restarts, pretty much all previously-issued tickets will no longer verify. If it becomes inaccessible, no run can be verified.
-
-* *Fixed Key, Random Salt*: If the administrator tells validators the private key, they can decrypt the ticket without relying on the server. This allows for manual validation if the server restarts or goes offline. In the latter case, any ticket that has yet to die can be verified if the server comes back online. This does open the door for validators or the administrator to crash the server then forge a ticket, however.
+To help ensure the security of the system, ticket generation and verification are rate-limited. This makes it difficult to pull tickets from the server until you get the seed you want, or submit random garbage to discover a valid ticket, or even to forge a ticket that passes verification if you happen to know the private key.
 
 ## Security
 
@@ -52,5 +52,14 @@ There are many ways to deploy BullCheese, but we suspect the two most popular wi
 That joke captures the essence of designing secure systems. You cannot make any system completely secure, instead you try to make the weakest link the one most convenient to defend.
 
 ## Parameters
+
+## Deployment
+
+There are many ways to deploy BullCheese, but we suspect the two most popular will be the following:
+
+* *Random Key, Random Salt*: The only way to verify a ticket is via the server. No validator is able to forge a ticket, and unless the administrator is a skilled hacker even they are ignorant of these values. There's nobody to bribe. Everything depends on that server remaining alive, though; if it restarts, pretty much all previously-issued tickets will no longer verify. If it becomes inaccessible, no run can be verified.
+
+* *Fixed Key, Random Salt*: If the administrator tells validators the private key, they can decrypt the ticket without relying on the server. This allows for manual validation if the server restarts or goes offline. In the latter case, any ticket that has yet to die can be verified if the server comes back online. This does open the door for validators or the administrator to crash the server then forge a ticket, however.
+
 
 ## .... "BullCheese?"
