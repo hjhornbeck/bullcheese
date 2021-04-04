@@ -13,11 +13,11 @@ It is designed to be quite flexible, as well. The server manager can tweak the s
 
 ## How it Works
 
-The code to generate and verify tickets is executed on a third-party server, so that it can only be modified by an administrator of that server. While all the source code and even the seeds are public, two security tokens are kept private: the private key and the salt. 
+The code to generate and verify tickets is executed on a third-party server, so that it can only be modified by an administrator of that server. While all the source code and even the seeds are public, two security tokens are kept private: the private key and the salt. The administrator is able to define these values, but if they choose not to then the server will use a cryptographically secure random number generator to generate them automatically.
 
 Seeds are organized into categories, which have a number, URL, and long name. The number is an arbitrary value between 0 and 225, inclusive. The URL is the URL these seeds can be accessed from via the web interface, while the long name is the text name presented to the player. These last two are burned into the seed file itself, while the number is set by the filename.
 
-The lifespan of a ticket is divided into three periods: *live*, *dead*, and *invalid/expired*. While it is *live*, the associated seed can be speedrun. A *dead* ticket can no longer result in a valid speedrun, but if validated it can still be verified by anyone. At all other times, the ticket cannot be run or verified and it is considered no different than random garbage pretending to be a ticket. The default live period is two hours after the ticket was generated, and the default dead period is two weeks after generation, but these values can be changed.
+The lifespan of a ticket is divided into three periods: *live*, *dead*, and *invalid/expired*. While it is *live*, the associated seed can be speedrun. A *dead* ticket can no longer result in a valid speedrun, but if validated it can still be verified by anyone. At all other times, the ticket cannot be run or verified and it is considered no different than random garbage pretending to be a ticket. The default live period ends two hours after the ticket was generated, and the default dead period ends two weeks after generation, but these values can be changed.
 
 When asked to generate a ticket, the code picks a random seed from a list and calculates the following value:
 
@@ -37,7 +37,19 @@ This value is converted to a hexadecimal number. Dashes are inserted at specific
 
 Verification is done by reversing this process. Dashes are verified to be in the proper place, stripped out, and the hexadecimal number converted to a byte sequence. This sequence is decrypted with the private key, (hopefully) revealing the Minecraft seed, category, and ticket creation time. If the salt is known, the HMAC is calculated and verified to match what was included inside the ticket. Additional checks are done: does the provided seed match the one in the ticket? Does that category contain the seed? And which of the three periods does the creation time fall into?
 
+To help ensure the security of the system, ticket generation and verification are rate-limited. This makes it difficult to pull tickets from the server until you get the seed you want, or submit random garbage to discover a valid ticket, or even to forge a ticket that passes verification if you happen to know the private key. This will be detailed more in the section on security.
+
+There are many ways to deploy BullCheese, but we suspect the two most popular will be the following:
+
+* *Random Key, Random Salt*: The only way to verify a ticket is via the server. No validator is able to forge a ticket, and unless the administrator is a skilled hacker even they are ignorant of these values. There's nobody to bribe. Everything depends on that server remaining alive, though; if it restarts, pretty much all previously-issued tickets will no longer verify. If it becomes inaccessible, no run can be verified.
+
+* *Fixed Key, Random Salt*: If the administrator tells validators the private key, they can decrypt the ticket without relying on the server. This allows for manual validation if the server restarts or goes offline. In the latter case, any ticket that has yet to die can be verified if the server comes back online. This does open the door for validators or the administrator to crash the server then forge a ticket, however.
+
 ## Security
+
+> Two people are walking along a mountain path, when they encounter a bear. One of them immediately turns and runs away. "Why are you running," shouts the second person. "Nobody can outrun a bear!" "I don't have to outrun the bear," the first person yells back, "I only need to outrun you!"
+
+That joke captures the essence of designing secure systems. You cannot make any system completely secure, instead you try to make the weakest link the one most convenient to defend.
 
 ## Parameters
 
