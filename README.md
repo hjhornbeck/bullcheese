@@ -24,7 +24,7 @@ The lifespan of a ticket is divided into three periods: *live*, *dead*, and *inv
 When asked to generate a ticket, the code picks a random seed from a list and calculates the following value:
 
 ```
-Encrypt( KEY, seed, category, time,  Truncate(HMAC( SALT, seed, category, time )) )
+Encrypt( KEY, seed + category + time + Truncate(HMAC( SALT, seed + category + time )) )
 ```
 
 `KEY` is the private key and `SALT` the salt, obviously. `seed` is the chosen Minecraft seed, as eight bytes. `category` is the numeric category the seed was chosen from, and one byte long.
