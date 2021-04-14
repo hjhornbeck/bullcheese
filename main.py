@@ -583,4 +583,6 @@ def validate(seed, ticket):
     validator.verify_throttle()
     return render_template( 'invalid_expired.html', cats=cat_list )
 
-site.run(host='0.0.0.0', port=8080)
+# allow this to be run as a standalone app
+if __name__ == '__main__':
+    site.run(host='0.0.0.0', port=8080)
