@@ -127,7 +127,7 @@ def generate_ticket( seed, cat, time, salt, key, blocks=2 ):
     key: A bytes object containing the encryption key.
     blocks: How long the ticket is, in blocks of 16 bytes.
       Shorter tickets are easier to work with but also easier to
-      forge. Only 1 and 2 are valid.
+      forge. Only 2 is valid.
 
     RETURN
     ======
@@ -137,17 +137,17 @@ def generate_ticket( seed, cat, time, salt, key, blocks=2 ):
     assert type(seed) is bytes
     assert len(seed) == 8
     assert type(cat) is int
-    assert (cat >= 0) and (cat <= 255)
+    assert (cat >= 0) and (cat < (1 << 32))
     assert type(time) is int
     assert (time >= 0) and (time <= 0xffffffff)
     assert type(salt) is bytes
     assert (len(salt) >= 24) and (len(salt) <= 64)
     assert type(key) is bytes
     assert len(key) in [16, 24, 32]
-    assert blocks in [1,2]
+    assert blocks == 2
 
     # create the ticket's core
-    core = seed + cat.to_bytes( 1, 'big' ) + time.to_bytes( 4, 'big' )
+    core = seed + cat.to_bytes( 3, 'big' ) + time.to_bytes( 4, 'big' )
 
     # create the associated tag
     tag = hash_bytes( core, salt )
@@ -202,15 +202,15 @@ def decrypt_ticket( seed, ticket, key, salt=None ):
     if raw_ticket[:8] != seed:
         return None
 
-    # check the pseudo-nonce (the "core" is 13 bytes long)
+    # check the pseudo-nonce (the "core" is 15 bytes long)
     if salt is not None:
-        tag = hash_bytes( raw_ticket[:13], salt )
-        if tag[: len(ticket) - 13] != raw_ticket[13:]:
+        tag = hash_bytes( raw_ticket[:15], salt )
+        if tag[: len(ticket) - 15] != raw_ticket[15:]:
             del tag
             return None
 
     return seed, raw_ticket[8], \
-        int.from_bytes( raw_ticket[9:13], 'big' )
+        int.from_bytes( raw_ticket[9:15], 'big' )
 
 def pretty_ticket( ticket, version=1 ):
     """Make the ticket look more appealing to human eyes.
